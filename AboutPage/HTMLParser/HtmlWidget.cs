@@ -42,6 +42,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace MatterHackers.MatterControl
 {
@@ -66,8 +67,8 @@ namespace MatterHackers.MatterControl
 
 			htmlParser.ParseHtml(htmlContent, AddContent, CloseContent);
 
-			VAnchor |= VAnchor.ParentBottomTop;
-			HAnchor |= HAnchor.ParentLeftRight;
+			VAnchor = VAnchor.Max_FitToChildren_ParentHeight;
+			HAnchor = HAnchor.Max_FitToChildren_ParentWidth;
 		}
 
 		public class WrappingTextWidget : GuiWidget
@@ -110,12 +111,37 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
+		// Replace multiple white spaces with single whitespace
+		private static readonly Regex replaceMultipleWhiteSpacesWithSingleWhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
+
 		private void AddContent(HtmlParser htmlParser, string htmlContent)
 		{
 			ElementState elementState = htmlParser.CurrentElementState;
+			htmlContent = replaceMultipleWhiteSpacesWithSingleWhitespaceRegex.Replace(htmlContent, " ");
 			string decodedHtml = HtmlParser.UrlDecode(htmlContent);
 			switch (elementState.TypeName)
 			{
+				case "a":
+					{
+						elementsUnderConstruction.Push(new FlowLayoutWidget());
+						elementsUnderConstruction.Peek().Name = "a";
+
+						if (decodedHtml != null && decodedHtml != "")
+						{
+							Button linkButton = linkButtonFactory.Generate(decodedHtml.Replace("\r\n", "\n"));
+							StyledTypeFace styled = new StyledTypeFace(LiberationSansFont.Instance, elementState.PointSize);
+							double descentInPixels = styled.DescentInPixels;
+							linkButton.OriginRelativeParent = new VectorMath.Vector2(linkButton.OriginRelativeParent.x, linkButton.OriginRelativeParent.y + descentInPixels);
+							linkButton.Click += (sender, mouseEvent) =>
+							{
+								MatterControlApplication.Instance.LaunchBrowser(elementState.Href);
+							};
+							elementsUnderConstruction.Peek().AddChild(linkButton);
+						}
+					}
+					break;
+
+				case "h1":
 				case "p":
 					{
 						elementsUnderConstruction.Push(new FlowLayoutWidget());
@@ -173,24 +199,7 @@ namespace MatterHackers.MatterControl
 					}
 					break;
 
-				case "a":
-					{
-						elementsUnderConstruction.Push(new FlowLayoutWidget());
-						elementsUnderConstruction.Peek().Name = "a";
-
-						if (decodedHtml != null && decodedHtml != "")
-						{
-							Button linkButton = linkButtonFactory.Generate(decodedHtml);
-							StyledTypeFace styled = new StyledTypeFace(LiberationSansFont.Instance, elementState.PointSize);
-							double descentInPixels = styled.DescentInPixels;
-							linkButton.OriginRelativeParent = new VectorMath.Vector2(linkButton.OriginRelativeParent.x, linkButton.OriginRelativeParent.y + descentInPixels);
-							linkButton.Click += (sender, mouseEvent) =>
-							{
-								MatterControlApplication.Instance.LaunchBrowser(elementState.Href);
-							};
-							elementsUnderConstruction.Peek().AddChild(linkButton);
-						}
-					}
+				case "input":
 					break;
 
 				case "table":
@@ -244,11 +253,11 @@ namespace MatterHackers.MatterControl
 					{
 						if (elementState.Id == "sendFeedback")
 						{
-							createdButton.Click += (sender, mouseEvent) => { ContactFormWindow.Open(); };
+							createdButton.Click += (s, e) =>  ContactFormWindow.Open();
 						}
 						else if (elementState.Id == "clearCache")
 						{
-							createdButton.Click += (sender, mouseEvent) => { AboutWidget.DeleteCacheData(); };
+							createdButton.Click += (s, e) => AboutWidget.DeleteCacheData(0);
 						}
 					}
 
@@ -274,7 +283,7 @@ namespace MatterHackers.MatterControl
 					break;
 
 				default:
-					throw new NotImplementedException("Don't know what to do with {0}".FormatWith(elementState.TypeName));
+					throw new NotImplementedException("Don't know what to do with '{0}'".FormatWith(elementState.TypeName));
 			}
 		}
 
@@ -292,6 +301,10 @@ namespace MatterHackers.MatterControl
 					elementsUnderConstruction.Peek().AddChild(aWidget);
 					break;
 
+				case "body":
+					break;
+
+				case "h1":
 				case "p":
 					GuiWidget pWidget = elementsUnderConstruction.Pop();
 					if (pWidget.Name != "p")
@@ -308,6 +321,9 @@ namespace MatterHackers.MatterControl
 						throw new Exception("Should have been 'div'.");
 					}
 					elementsUnderConstruction.Peek().AddChild(divWidget);
+					break;
+
+				case "input":
 					break;
 
 				case "table":

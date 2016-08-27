@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014, Lars Brubaker, Kevin Pope
+Copyright (c) 2016, Lars Brubaker, Kevin Pope
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -40,19 +40,35 @@ using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.PolygonMesh.Processors;
 using MatterHackers.RenderOpenGl.OpenGl;
 using MatterHackers.VectorMath;
+using Mindscape.Raygun4Net;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
-using Xamarin;
+using System.Threading.Tasks;
+using MatterHackers.GCodeVisualizer;
+using Gaming.Game;
+using MatterHackers.GuiAutomation;
+using MatterHackers.MatterControl.PrinterControls.PrinterConnections;
+using MatterHackers.MatterControl.CustomWidgets;
+using Newtonsoft.Json;
 
 namespace MatterHackers.MatterControl
 {
-	public class MatterControlApplication : SystemWindow
+    public class MatterControlApplication : SystemWindow
 	{
+#if DEBUG
+		//public static string MCWSBaseUri { get; } = "http://192.168.2.129:9206";
+		public static string MCWSBaseUri { get; } = "https://mattercontrol-test.appspot.com";
+#else
+		public static string MCWSBaseUri { get; } = "https://mattercontrol.appspot.com";
+#endif
+
+public static bool CameraPreviewActive = false;
 		public bool RestartOnClose = false;
 		private static readonly Vector2 minSize = new Vector2(600, 600);
 		private static MatterControlApplication instance;
@@ -60,31 +76,64 @@ namespace MatterHackers.MatterControl
 		private string confirmExit = "Confirm Exit".Localize();
 		private bool DoCGCollectEveryDraw = false;
 		private int drawCount = 0;
-		private bool firstDraw = true;
 		private AverageMillisecondTimer millisecondTimer = new AverageMillisecondTimer();
-		private Gaming.Game.DataViewGraph msGraph = new Gaming.Game.DataViewGraph(new Vector2(20, 500), 50, 50, 0, 200);
+		private DataViewGraph msGraph;
 		private string savePartsSheetExitAnywayMessage = "You are currently saving a parts sheet, are you sure you want to exit?".Localize();
 		private bool ShowMemoryUsed = false;
+
+		public void ConfigureWifi()
+		{
+		}
+
 		private Stopwatch totalDrawTime = new Stopwatch();
 
-		private string unableToExitMessage = "Oops! You cannot exit while a print is active.".Localize();
+#if true//!DEBUG
+		static RaygunClient _raygunClient = GetCorrectClient();
+#endif
 
-		private string unableToExitTitle = "Unable to Exit".Localize();
+		static RaygunClient GetCorrectClient()
+		{
+			if (OsInformation.OperatingSystem == OSType.Mac)
+			{
+				return new RaygunClient("qmMBpKy3OSTJj83+tkO7BQ=="); // this is the Mac key
+			}
+			else
+			{
+				return new RaygunClient("hQIlyUUZRGPyXVXbI6l1dA=="); // this is the PC key
+			}
+		}
+
+		public static bool IsLoading { get; private set; } = true;
 
 		static MatterControlApplication()
 		{
+			if (OsInformation.OperatingSystem == OSType.Mac)
+			{
+				// Set working directory - this duplicates functionality in Main but is necessary on OSX as Main fires much later (after the constructor in this case)
+				// resulting in invalid paths due to path tests running before the working directory has been overridden. Setting the value before initializing StaticData
+				// works around this architectural difference.
+				Directory.SetCurrentDirectory(Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location));
+			}
+
 			// Because fields on this class call localization methods and because those methods depend on the StaticData provider and because the field
 			// initializers run before the class constructor, we need to init the platform specific provider in the static constructor (or write a custom initializer method)
 			//
 			// Initialize a standard file system backed StaticData provider
-			StaticData.Instance = new MatterHackers.Agg.FileSystemStaticData();
+			if (StaticData.Instance == null) // it may already be initialized by tests
+			{
+				StaticData.Instance = new MatterHackers.Agg.FileSystemStaticData();
+			}
+
+			if (OemSettings.Instance.ForceTestEnvironment)
+			{
+				MCWSBaseUri = "https://mattercontrol-test.appspot.com";
+			}
 		}
 
-		private MatterControlApplication(double width, double height, out bool showWindow)
+		private MatterControlApplication(double width, double height)
 			: base(width, height)
 		{
 			Name = "MatterControl";
-			showWindow = false;
 
 			// set this at startup so that we can tell next time if it got set to true in close
 			UserSettings.Instance.Fields.StartCount = UserSettings.Instance.Fields.StartCount + 1;
@@ -100,53 +149,13 @@ namespace MatterHackers.MatterControl
 				string commandUpper = command.ToUpper();
 				switch (commandUpper)
 				{
-					case "TEST":
-						CheckKnownAssemblyConditionalCompSymbols();
-						return;
-
 					case "FORCE_SOFTWARE_RENDERING":
 						forceSofwareRendering = true;
 						GL.ForceSoftwareRendering();
 						break;
 
-					case "MHSERIAL_TO_ANDROID":
-						{
-							Dictionary<string, string> vidPid_NameDictionary = new Dictionary<string, string>();
-							string[] MHSerialLines = File.ReadAllLines(Path.Combine("..", "..", "StaticData", "Drivers", "MHSerial", "MHSerial.inf"));
-							foreach (string line in MHSerialLines)
-							{
-								if (line.Contains("=DriverInstall,"))
-								{
-									string name = Regex.Match(line, "%(.*).name").Groups[1].Value;
-									string vid = Regex.Match(line, "VID_(.*)&PID").Groups[1].Value;
-									string pid = Regex.Match(line, "PID_([0-9a-fA-F]+)").Groups[1].Value;
-									string vidPid = "{0},{1}".FormatWith(vid, pid);
-									if (!vidPid_NameDictionary.ContainsKey(vidPid))
-									{
-										vidPid_NameDictionary.Add(vidPid, name);
-									}
-								}
-							}
-
-							using (StreamWriter deviceFilter = new StreamWriter("deviceFilter.txt"))
-							{
-								using (StreamWriter serialPort = new StreamWriter("serialPort.txt"))
-								{
-									foreach (KeyValuePair<string, string> vidPid_Name in vidPid_NameDictionary)
-									{
-										string[] vidPid = vidPid_Name.Key.Split(',');
-										int vid = Int32.Parse(vidPid[0], System.Globalization.NumberStyles.HexNumber);
-										int pid = Int32.Parse(vidPid[1], System.Globalization.NumberStyles.HexNumber);
-										serialPort.WriteLine("customTable.AddProduct(0x{0:X4}, 0x{1:X4}, cdcDriverType);  // {2}".FormatWith(vid, pid, vidPid_Name.Value));
-										deviceFilter.WriteLine("<!-- {2} -->\n<usb-device vendor-id=\"{0}\" product-id=\"{1}\" />".FormatWith(vid, pid, vidPid_Name.Value));
-									}
-								}
-							}
-						}
-						return;
-
 					case "CLEAR_CACHE":
-						AboutWidget.DeleteCacheData();
+						AboutWidget.DeleteCacheData(0);
 						break;
 
 					case "SHOW_MEMORY":
@@ -158,32 +167,32 @@ namespace MatterHackers.MatterControl
 						DoCGCollectEveryDraw = true;
 						break;
 
-					case "CREATE_AND_SELECT_PRINTER":
-						if (currentCommandIndex + 1 <= commandLineArgs.Length)
-						{
-							currentCommandIndex++;
-							string argument = commandLineArgs[currentCommandIndex];
-							string[] printerData = argument.Split(',');
-							if (printerData.Length >= 2)
-							{
-								Printer ActivePrinter = new Printer();
+					//case "CREATE_AND_SELECT_PRINTER":
+					//	if (currentCommandIndex + 1 <= commandLineArgs.Length)
+					//	{
+					//		currentCommandIndex++;
+					//		string argument = commandLineArgs[currentCommandIndex];
+					//		string[] printerData = argument.Split(',');
+					//		if (printerData.Length >= 2)
+					//		{
+					//			Printer ActivePrinter = new Printer();
 
-								ActivePrinter.Name = "Auto: {0} {1}".FormatWith(printerData[0], printerData[1]);
-								ActivePrinter.Make = printerData[0];
-								ActivePrinter.Model = printerData[1];
+					//			ActivePrinter.Name = "Auto: {0} {1}".FormatWith(printerData[0], printerData[1]);
+					//			ActivePrinter.Make = printerData[0];
+					//			ActivePrinter.Model = printerData[1];
 
-								if (printerData.Length == 3)
-								{
-									ActivePrinter.ComPort = printerData[2];
-								}
+					//			if (printerData.Length == 3)
+					//			{
+					//				ActivePrinter.ComPort = printerData[2];
+					//			}
 
-								PrinterSetupStatus test = new PrinterSetupStatus(ActivePrinter);
-								test.LoadDefaultSliceSettings(ActivePrinter.Make, ActivePrinter.Model);
-								ActivePrinterProfile.Instance.ActivePrinter = ActivePrinter;
-							}
-						}
+					//			PrinterSetupStatus test = new PrinterSetupStatus(ActivePrinter);
+					//			test.LoadSettingsFromConfigFile(ActivePrinter.Make, ActivePrinter.Model);
+					//			ActiveSliceSettings.Instance = ActivePrinter;
+					//		}
+					//	}
 
-						break;
+					//	break;
 
 					case "CONNECT_TO_PRINTER":
 						if (currentCommandIndex + 1 <= commandLineArgs.Length)
@@ -215,29 +224,24 @@ namespace MatterHackers.MatterControl
 						}
 						break;
 
-                    case "SLICE_AND_EXPORT_GCODE":
-                        if(currentCommandIndex + 1 <= commandLineArgs.Length)
-                        {
+					case "SLICE_AND_EXPORT_GCODE":
+						if (currentCommandIndex + 1 <= commandLineArgs.Length)
+						{
+							currentCommandIndex++;
+							string fullPath = commandLineArgs[currentCommandIndex];
+							QueueData.Instance.RemoveAll();
+							if (!string.IsNullOrEmpty(fullPath))
+							{
+								string fileName = Path.GetFileNameWithoutExtension(fullPath);
+								PrintItemWrapper printItemWrapper = new PrintItemWrapper(new PrintItem(fileName, fullPath));
+								QueueData.Instance.AddItem(printItemWrapper);
 
-                            currentCommandIndex++;
-                            string fullPath = commandLineArgs[currentCommandIndex];
-                            QueueData.Instance.RemoveAll();
-                            if(!string.IsNullOrEmpty(fullPath))
-                            {
-
-                                string fileName = Path.GetFileNameWithoutExtension(fullPath);
-                                PrintItemWrapper printItemWrapper = new PrintItemWrapper(new PrintItem(fileName,fullPath));
-                                QueueData.Instance.AddItem(printItemWrapper);
-
-                                SlicingQueue.Instance.QueuePartForSlicing(printItemWrapper);
-                                ExportPrintItemWindow exportForTest = new ExportPrintItemWindow(printItemWrapper);
-                                exportForTest.ExportGcodeCommandLineUtility(fileName);
-                            
-                            }
-                       
-                        }
-                        break;
-
+								SlicingQueue.Instance.QueuePartForSlicing(printItemWrapper);
+								ExportPrintItemWindow exportForTest = new ExportPrintItemWindow(printItemWrapper);
+								exportForTest.ExportGcodeCommandLineUtility(fileName);
+							}
+						}
+						break;
 				}
 
 				if (MeshFileIo.ValidFileExtensions().Contains(Path.GetExtension(command).ToUpper()))
@@ -265,12 +269,16 @@ namespace MatterHackers.MatterControl
 
 			GuiWidget.DefaultEnforceIntegerBounds = true;
 
-			if (ActiveTheme.Instance.DisplayMode == ActiveTheme.ApplicationDisplayType.Touchscreen)
+			if (UserSettings.Instance.DisplayMode == ApplicationDisplayType.Touchscreen)
 			{
-				TextWidget.GlobalPointSizeScaleRatio = 1.3;
+				GuiWidget.DeviceScale = 1.3;
 			}
+			//GuiWidget.DeviceScale = 2;
 
-			this.AddChild(ApplicationController.Instance.MainView);
+			using (new PerformanceTimer("Startup", "MainView"))
+			{
+				this.AddChild(ApplicationController.Instance.MainView);
+			}
 			this.MinimumSize = minSize;
 			this.Padding = new BorderDouble(0); //To be re-enabled once native borders are turned off
 
@@ -291,7 +299,7 @@ namespace MatterHackers.MatterControl
 			{
 				UseOpenGL = true;
 			}
-			string version = "1.2";
+			string version = "1.5";
 
 			Title = "MatterControl {0}".FormatWith(version);
 			if (OemSettings.Instance.WindowTitleExtra != null && OemSettings.Instance.WindowTitleExtra.Trim().Length > 0)
@@ -313,14 +321,82 @@ namespace MatterHackers.MatterControl
 				DesktopPosition = new Point2D(xpos, ypos);
 			}
 
-			showWindow = true;
+			IsLoading = false;
 		}
 
-		public enum ReportSeverity2 { Warning, Error }
+        bool dropWasOnChild = true;
+        public override void OnDragEnter(FileDropEventArgs fileDropEventArgs)
+        {
+            base.OnDragEnter(fileDropEventArgs);
 
-		public void ReportException(Exception e, string key, string value, ReportSeverity2 warningLevel = ReportSeverity2.Warning)
+            if (!fileDropEventArgs.AcceptDrop)
+            {
+                // no child has accepted the drop
+                foreach (string file in fileDropEventArgs.DroppedFiles)
+                {
+                    string extension = Path.GetExtension(file).ToUpper();
+                    if ((extension != "" && MeshFileIo.ValidFileExtensions().Contains(extension))
+                        || extension == ".GCODE"
+                        || extension == ".ZIP")
+                    {
+                        fileDropEventArgs.AcceptDrop = true;
+                    }
+                }
+                dropWasOnChild = false;
+            }
+            else
+            {
+                dropWasOnChild = true;
+            }
+        }
+
+        public override void OnDragOver(FileDropEventArgs fileDropEventArgs)
+        {
+            base.OnDragOver(fileDropEventArgs);
+
+            if (!fileDropEventArgs.AcceptDrop)
+            {
+                // no child has accepted the drop
+                foreach (string file in fileDropEventArgs.DroppedFiles)
+                {
+                    string extension = Path.GetExtension(file).ToUpper();
+                    if ((extension != "" && MeshFileIo.ValidFileExtensions().Contains(extension))
+                        || extension == ".GCODE"
+                        || extension == ".ZIP")
+                    {
+                        fileDropEventArgs.AcceptDrop = true;
+                    }
+                }
+                dropWasOnChild = false;
+            }
+            else
+            {
+                dropWasOnChild = true;
+            }
+        }
+
+        public override void OnDragDrop(FileDropEventArgs fileDropEventArgs)
+        {
+            base.OnDragDrop(fileDropEventArgs);
+
+            if (!dropWasOnChild)
+            {
+                QueueDataWidget.DoAddFiles(fileDropEventArgs.DroppedFiles);
+            }
+        }
+
+        public enum ReportSeverity2 { Warning, Error }
+
+		public void ReportException(Exception e, string key = "", string value = "", ReportSeverity2 warningLevel = ReportSeverity2.Warning)
 		{
-			// do nothing
+			// Conditionally spin up error reporting if not on the Stable channel
+			string channel = UserSettings.Instance.get("UpdateFeedType");
+			if (string.IsNullOrEmpty(channel) || channel != "release" || OemSettings.Instance.WindowTitleExtra == "Experimental")
+			{
+#if !DEBUG
+				_raygunClient.Send(e);
+#endif
+			}
 		}
 
 		private event EventHandler unregisterEvent;
@@ -331,51 +407,104 @@ namespace MatterHackers.MatterControl
 			{
 				if (instance == null)
 				{
-					// try and open our window matching the last size that we had for it.
-					string windowSize = ApplicationSettings.Instance.get("WindowSize");
-					int width = 1280;
-					int height = 720;
-					if (windowSize != null && windowSize != "")
-					{
-						string[] sizes = windowSize.Split(',');
-						width = Math.Max(int.Parse(sizes[0]), (int)minSize.x + 1);
-						height = Math.Max(int.Parse(sizes[1]), (int)minSize.y + 1);
-					}
-
-					bool showWindow;
-					instance = new MatterControlApplication(width, height, out showWindow);
-
-					if (showWindow)
-					{
-						instance.ShowAsSystemWindow();
-					}
+					LoadUITheme();
+					instance = CreateInstance();
+					instance.ShowAsSystemWindow();
 				}
 
 				return instance;
 			}
 		}
 
+		public static void LoadUITheme()
+		{
+			//Load the default theme by index
+			if (string.IsNullOrEmpty(UserSettings.Instance.get("ActiveThemeIndex")))
+			{
+				for (int i = 0; i < ActiveTheme.AvailableThemes.Count; i++)
+				{
+					IThemeColors current = ActiveTheme.AvailableThemes[i];
+					if (current.Name == OemSettings.Instance.ThemeColor)
+					{
+						UserSettings.Instance.set("ActiveThemeIndex", i.ToString());
+						break;
+					}
+				}
+			}
+
+			int themeIndex;
+			if (int.TryParse(UserSettings.Instance.get("ActiveThemeIndex"), out themeIndex) && themeIndex < ActiveTheme.AvailableThemes.Count)
+			{
+				try
+				{
+					ActiveTheme.Instance = ActiveTheme.AvailableThemes[themeIndex];
+				}
+				catch
+				{
+					GuiWidget.BreakInDebugger();
+				}
+			}
+		}
+
+		public static MatterControlApplication CreateInstance(int overrideWidth = -1, int overrideHeight = -1)
+		{
+			// try and open our window matching the last size that we had for it.
+			string windowSize = ApplicationSettings.Instance.get("WindowSize");
+			int width = overrideWidth == -1 ? 601 : overrideWidth;
+			int height = overrideHeight == -1 ? 601 : overrideHeight;
+			if (windowSize != null && windowSize != "")
+			{
+				string[] sizes = windowSize.Split(',');
+				width = Math.Max(int.Parse(sizes[0]), (int)minSize.x + 1);
+				height = Math.Max(int.Parse(sizes[1]), (int)minSize.y + 1);
+			}
+
+            using (new PerformanceTimer("Startup", "Total"))
+            {
+                instance = new MatterControlApplication(width, height);
+            }
+
+			return instance;
+		}
+
 		[STAThread]
 		public static void Main()
 		{
+            PerformanceTimer.GetParentWindowFunction = () => { return MatterControlApplication.instance; };
+
+            CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+
 			// Make sure we have the right working directory as we assume everything relative to the executable.
 			Directory.SetCurrentDirectory(Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location));
 
 			Datastore.Instance.Initialize();
 
 #if !DEBUG
-			// Conditionally spin up Insights reporting if not on the Stable channel
+			// Conditionally spin up error reporting if not on the Stable channel
 			string channel = UserSettings.Instance.get("UpdateFeedType");
-			if (string.IsNullOrEmpty(channel) || channel != "release")
+			if (string.IsNullOrEmpty(channel) || channel != "release" || OemSettings.Instance.WindowTitleExtra == "Experimental")
 #endif
 			{
-				Insights.Initialize(
-					"2b84bf883521ee8deca1b633b7d33818c20b87cc",
-					string.Format("{0} ({1})", VersionInfo.Instance.ReleaseVersion, VersionInfo.Instance.BuildVersion),
-					"MatterControl Desktop");
+				System.Windows.Forms.Application.ThreadException += new ThreadExceptionEventHandler(Application_ThreadException);
+				AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(CurrentDomain_UnhandledException);
 			}
 
 			MatterControlApplication app = MatterControlApplication.Instance;
+		}
+
+		private static void Application_ThreadException(object sender, ThreadExceptionEventArgs e)
+		{
+#if !DEBUG
+			_raygunClient.Send(e.Exception);
+#endif
+		}
+
+		private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+		{
+#if !DEBUG
+			_raygunClient.Send(e.ExceptionObject as Exception);
+#endif
 		}
 
 		public static void WriteTestGCodeFile()
@@ -410,14 +539,9 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
-		public void DoAutoConnectIfRequired(object state)
-		{
-			ActivePrinterProfile.CheckForAndDoAutoConnect();
-		}
-
 		public void LaunchBrowser(string targetUri)
 		{
-			UiThread.RunOnIdle((state) =>
+			UiThread.RunOnIdle(() =>
 			{
 				System.Diagnostics.Process.Start(targetUri);
 			});
@@ -428,7 +552,10 @@ namespace MatterHackers.MatterControl
 			UserSettings.Instance.Fields.StartCountDurringExit = UserSettings.Instance.Fields.StartCount;
 
 			TerminalWindow.CloseIfOpen();
-			PrinterConnectionAndCommunication.Instance.Disable();
+			if (PrinterConnectionAndCommunication.Instance.CommunicationState != PrinterConnectionAndCommunication.CommunicationStates.PrintingFromSd)
+			{
+				PrinterConnectionAndCommunication.Instance.Disable();
+			}
 			//Close connection to the local datastore
 			Datastore.Instance.Exit();
 			PrinterConnectionAndCommunication.Instance.HaltConnectionThread();
@@ -462,7 +589,26 @@ namespace MatterHackers.MatterControl
 
 			if (PrinterConnectionAndCommunication.Instance.PrinterIsPrinting)
 			{
-				StyledMessageBox.ShowMessageBox(null, unableToExitMessage, unableToExitTitle);
+				// Needed as we can't assign to CancelClose inside of the lambda below
+				bool continueWithShutdown = false;
+
+				StyledMessageBox.ShowMessageBox(
+					(shutdownConfirmed) => continueWithShutdown = shutdownConfirmed,
+					"Are you sure you want to abort the current print and close MatterControl?".Localize(),
+					"Abort Print".Localize(),
+					StyledMessageBox.MessageType.YES_NO);
+
+				if (continueWithShutdown)
+				{
+					if (PrinterConnectionAndCommunication.Instance.CommunicationState != PrinterConnectionAndCommunication.CommunicationStates.PrintingFromSd)
+					{
+						PrinterConnectionAndCommunication.Instance.Disable();
+					}
+					this.Close();
+				}
+
+				// It's safe to cancel an active print because PrinterConnectionAndCommunication.Disable will be called 
+				// when MatterControlApplication.OnClosed is invoked
 				CancelClose = true;
 			}
 			else if (PartsSheet.IsSaving())
@@ -476,11 +622,14 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
-		public override void OnDraw(Graphics2D graphics2D)
+        public override void OnDraw(Graphics2D graphics2D)
 		{
 			totalDrawTime.Restart();
 			GuiWidget.DrawCount = 0;
-			base.OnDraw(graphics2D);
+			using (new PerformanceTimer("Draw Timer", "MC Draw"))
+			{
+				base.OnDraw(graphics2D);
+			}
 			totalDrawTime.Stop();
 
 			millisecondTimer.Update((int)totalDrawTime.ElapsedMilliseconds);
@@ -488,43 +637,50 @@ namespace MatterHackers.MatterControl
 			if (ShowMemoryUsed)
 			{
 				long memory = GC.GetTotalMemory(false);
-				this.Title = "Allocated = {0:n0} : {1:000}ms, d{2} Size = {3}x{4}, onIdle = {5:00}:{6:00}, drawCount = {7}".FormatWith(memory, millisecondTimer.GetAverage(), drawCount++, this.Width, this.Height, UiThread.CountExpired, UiThread.Count, GuiWidget.DrawCount);
+				this.Title = "Allocated = {0:n0} : {1:000}ms, d{2} Size = {3}x{4}, onIdle = {5:00}:{6:00}, widgetsDrawn = {7}".FormatWith(memory, millisecondTimer.GetAverage(), drawCount++, this.Width, this.Height, UiThread.CountExpired, UiThread.Count, GuiWidget.DrawCount);
 				if (DoCGCollectEveryDraw)
 				{
 					GC.Collect();
 				}
 			}
 
-			if (firstDraw && commandLineArgs.Length < 2)
-			{
-				UiThread.RunOnIdle(DoAutoConnectIfRequired);
-
-				firstDraw = false;
-				foreach (string arg in commandLineArgs)
-				{
-					string argExtension = Path.GetExtension(arg).ToUpper();
-					if (argExtension.Length > 1
-						&& MeshFileIo.ValidFileExtensions().Contains(argExtension))
-					{
-						QueueData.Instance.AddItem(new PrintItemWrapper(new DataStorage.PrintItem(Path.GetFileName(arg), Path.GetFullPath(arg))));
-					}
-				}
-
-				TerminalWindow.ShowIfLeftOpen();
-
-#if false
-				foreach (CreatorInformation creatorInfo in RegisteredCreators.Instance.Creators)
-				{
-					if (creatorInfo.description.Contains("Image"))
-					{
-						creatorInfo.functionToLaunchCreator(null, null);
-					}
-				}
-#endif
-			}
-
 			//msGraph.AddData("ms", totalDrawTime.ElapsedMilliseconds);
 			//msGraph.Draw(MatterHackers.Agg.Transform.Affine.NewIdentity(), graphics2D);
+		}
+
+		public override void OnLoad(EventArgs args)
+		{
+			foreach (string arg in commandLineArgs)
+			{
+				string argExtension = Path.GetExtension(arg).ToUpper();
+				if (argExtension.Length > 1
+					&& MeshFileIo.ValidFileExtensions().Contains(argExtension))
+				{
+					QueueData.Instance.AddItem(new PrintItemWrapper(new PrintItem(Path.GetFileName(arg), Path.GetFullPath(arg))));
+				}
+			}
+
+			TerminalWindow.ShowIfLeftOpen();
+
+			ApplicationController.Instance.OnLoadActions();
+
+#if false
+			{
+				SystemWindow releaseNotes = new SystemWindow(640, 480);
+				string releaseNotesFile = Path.Combine("C:/Users/LarsBrubaker/Downloads", "test1.html");
+				string releaseNotesContent = StaticData.Instance.ReadAllText(releaseNotesFile);
+				HtmlWidget content = new HtmlWidget(releaseNotesContent, RGBA_Bytes.Black);
+				content.AddChild(new GuiWidget(HAnchor.AbsolutePosition, VAnchor.ParentBottomTop));
+				content.VAnchor |= VAnchor.ParentTop;
+				content.BackgroundColor = RGBA_Bytes.White;
+				releaseNotes.AddChild(content);
+				releaseNotes.BackgroundColor = RGBA_Bytes.Cyan;
+				UiThread.RunOnIdle((state) =>
+				{
+					releaseNotes.ShowAsSystemWindow();
+				}, 1);
+			}
+#endif
 		}
 
 		public override void OnMouseMove(MouseEventArgs mouseEvent)
@@ -547,6 +703,11 @@ namespace MatterHackers.MatterControl
 
 			// now that we are all set up lets load our plugins and allow them their chance to set things up
 			FindAndInstantiatePlugins();
+
+			if(ApplicationController.Instance.PluginsLoaded != null)
+			{
+				ApplicationController.Instance.PluginsLoaded.CallEvents(null, null);
+			}
 		}
 
 		public void OpenCameraPreview()
@@ -578,7 +739,7 @@ namespace MatterHackers.MatterControl
 			file.WriteLine("G1 X" + center.x.ToString() + " Y" + center.y.ToString());
 		}
 
-		private void CheckOnPrinter(object state)
+		private void CheckOnPrinter()
 		{
 			try
 			{
@@ -587,6 +748,7 @@ namespace MatterHackers.MatterControl
 			catch (Exception e)
 			{
 				Debug.Print(e.Message);
+				GuiWidget.BreakInDebugger();
 #if DEBUG
 				throw e;
 #endif
@@ -605,7 +767,7 @@ namespace MatterHackers.MatterControl
 #endif
 			if (!Directory.Exists(pluginDirectory))
 			{
-				string dataPath = DataStorage.ApplicationDataStorage.Instance.ApplicationUserDataPath;
+				string dataPath = ApplicationDataStorage.Instance.ApplicationUserDataPath;
 				pluginDirectory = Path.Combine(dataPath, "Plugins");
 			}
 			// TODO: this should look in a plugin folder rather than just the application directory (we probably want it in the user folder).
@@ -650,14 +812,38 @@ namespace MatterHackers.MatterControl
 #endif
 		}
 
+		bool showNamesUnderMouse = false;
+		public override void OnKeyDown(KeyEventArgs keyEvent)
+		{
+			if (keyEvent.KeyCode == Keys.F2)
+			{
+				Task.Run((Action)AutomationTest);
+			}
+			else if (keyEvent.KeyCode == Keys.F1)
+			{
+				showNamesUnderMouse = !showNamesUnderMouse;
+			}
+
+			base.OnKeyDown(keyEvent);
+		}
+
+		private void AutomationTest()
+		{
+			AutomationRunner test = new AutomationRunner();
+			test.ClickByName("Library Tab", 5);
+			test.ClickByName("Queue Tab", 5);
+			test.ClickByName("Queue Item SkeletonArm_Med", 5);
+			test.ClickByName("3D View Edit", 5);
+			test.Wait(.2);
+			test.DragByName("SkeletonArm_Med_IObject3D", 5);
+			test.DropByName("SkeletonArm_Med_IObject3D", 5, offset: new Point2D(0, -40));
+		}
 		public static void CheckKnownAssemblyConditionalCompSymbols()
 		{
 			MatterControlApplication.AssertDebugNotDefined();
 			MatterHackers.GCodeVisualizer.GCodeFile.AssertDebugNotDefined();
 			MatterHackers.Agg.Graphics2D.AssertDebugNotDefined();
 			MatterHackers.Agg.UI.SystemWindow.AssertDebugNotDefined();
-			ClipperLib.Clipper.AssertDebugNotDefined();
-			MatterHackers.Csg.Utilities.AssertDebugNotDefined();
 			MatterHackers.Agg.ImageProcessing.InvertLightness.AssertDebugNotDefined();
 			MatterHackers.Localizations.TranslationMap.AssertDebugNotDefined();
 			MatterHackers.MarchingSquares.MarchingSquaresByte.AssertDebugNotDefined();
@@ -667,8 +853,9 @@ namespace MatterHackers.MatterControl
 			MatterHackers.RenderOpenGl.GLMeshTrianglePlugin.AssertDebugNotDefined();
 		}
 
-
-
+		public bool IsNetworkConnected()
+		{
+			return true;
+		}
 	}
-
 }

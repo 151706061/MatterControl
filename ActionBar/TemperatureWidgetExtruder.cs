@@ -1,5 +1,5 @@
 ﻿/*
-Copyright (c) 2014, Kevin Pope
+Copyright (c) 2016, Kevin Pope, John Lewin
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -37,41 +37,27 @@ namespace MatterHackers.MatterControl.ActionBar
 	internal class TemperatureWidgetExtruder : TemperatureWidgetBase
 	{
 		private int extruderNumber = 1;
+		private event EventHandler unregisterEvents;
+
+		private string sliceSettingsNote = "Note: Slice Settings are applied before the print actually starts. Changes while printing will not effect the active print.".Localize();
+		private string waitingForExtruderToHeatMessage = "The extruder is currently heating and its target temperature cannot be changed until it reaches {0}°C.\n\nYou can set the starting extruder temperature in 'Slice Settings' -> 'Filament'.\n\n{1}".Localize();
 
 		public TemperatureWidgetExtruder()
 			: base("150.3°")
 		{
-			labelTextWidget.Text = "Extruder";
-			AddHandlers();
+			temperatureTypeName.Text = "Extruder";
 			setToCurrentTemperature();
-		}
 
-		private event EventHandler unregisterEvents;
+			ToolTipText = "Current extruder temperature".Localize();
+			preheatButton.ToolTipText = "Preheat the Extruder".Localize();
 
-		private void AddHandlers()
-		{
-			PrinterConnectionAndCommunication.Instance.ExtruderTemperatureRead.RegisterEvent(onTemperatureRead, ref unregisterEvents);
-			this.MouseEnterBounds += onMouseEnterBounds;
-			this.MouseLeaveBounds += onMouseLeaveBounds;
+			PrinterConnectionAndCommunication.Instance.ExtruderTemperatureRead.RegisterEvent((s, e) => setToCurrentTemperature(), ref unregisterEvents);
 		}
 
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
-		}
-
-		private void onMouseEnterBounds(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.ShowHoverText(LocalizedString.Get("Extruder Temperature"));
-		}
-
-		private void onMouseLeaveBounds(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.HideHoverText();
 		}
 
 		private void setToCurrentTemperature()
@@ -91,27 +77,18 @@ namespace MatterHackers.MatterControl.ActionBar
 			this.IndicatorValue = string.Format(" {0:0.#}°{1}", PrinterConnectionAndCommunication.Instance.GetActualExtruderTemperature(extruderNumber - 1), tempDirectionIndicator);
 		}
 
-		private void onTemperatureRead(Object sender, EventArgs e)
-		{
-			setToCurrentTemperature();
-		}
-
-		private string sliceSettingsNote = "Note: Slice Settings are applied before the print actually starts. Changes while printing will not effect the active print.".Localize();
-		private string waitingForeExtruderToHeatMessage = "The extruder is currently heating and its target temperature cannot be changed until it reaches {0}°C.\n\nYou can set the starting extruder temperature in 'Slice Settings' -> 'Filament'.\n\n{1}".Localize();
-		private string waitingForeExtruderToHeatTitle = "Waiting For Extruder To Heat".Localize();
-
 		protected override void SetTargetTemperature()
 		{
 			double targetTemp;
-			if (double.TryParse(ActiveSliceSettings.Instance.GetActiveValue("temperature"), out targetTemp))
+			if (double.TryParse(ActiveSliceSettings.Instance.GetValue("temperature"), out targetTemp))
 			{
 				double goalTemp = (int)(targetTemp + .5);
 				if (PrinterConnectionAndCommunication.Instance.PrinterIsPrinting
 					&& PrinterConnectionAndCommunication.Instance.PrintingState == PrinterConnectionAndCommunication.DetailedPrintingState.HeatingExtruder
 					&& goalTemp != PrinterConnectionAndCommunication.Instance.GetTargetExtruderTemperature(extruderNumber - 1))
 				{
-					string message = string.Format(waitingForeExtruderToHeatMessage, PrinterConnectionAndCommunication.Instance.GetTargetExtruderTemperature(extruderNumber - 1), sliceSettingsNote);
-					StyledMessageBox.ShowMessageBox(null, message, waitingForeExtruderToHeatTitle);
+					string message = string.Format(waitingForExtruderToHeatMessage, PrinterConnectionAndCommunication.Instance.GetTargetExtruderTemperature(extruderNumber - 1), sliceSettingsNote);
+					StyledMessageBox.ShowMessageBox(null, message, "Waiting For Extruder To Heat".Localize());
 				}
 				else
 				{

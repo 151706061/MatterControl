@@ -27,20 +27,53 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
+using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.MeshVisualizer;
 using MatterHackers.PolygonMesh;
 using MatterHackers.VectorMath;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.PartPreviewWindow
 {
+	internal class ArangeUndoCommand : IUndoRedoCommand
+	{
+		List<TransformUndoCommand> allUndoTransforms = new List<TransformUndoCommand>();
+
+		public ArangeUndoCommand(View3DWidget view3DWidget, List<Matrix4X4> preArrangeTarnsforms, List<Matrix4X4> postArrangeTarnsforms)
+		{
+			for(int i=0; i<preArrangeTarnsforms.Count; i++)
+			{
+				allUndoTransforms.Add(new TransformUndoCommand(view3DWidget, i, preArrangeTarnsforms[i], postArrangeTarnsforms[i]));
+			}
+		}
+
+		public void Do()
+		{
+			for (int i = 0; i < allUndoTransforms.Count; i++)
+			{
+				allUndoTransforms[i].Do();
+			}
+		}
+
+		public void Undo()
+		{
+			for (int i = 0; i < allUndoTransforms.Count; i++)
+			{
+				allUndoTransforms[i].Undo();
+			}
+		}
+	}
+
 	public partial class View3DWidget
 	{
-		private void AutoArrangePartsInBackground()
+		private async void AutoArrangePartsInBackground()
 		{
 			if (MeshGroups.Count > 0)
 			{
@@ -51,117 +84,35 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				processingProgressControl.PercentComplete = 0;
 				LockEditControls();
 
-				BackgroundWorker arrangeMeshGroupsBackgroundWorker = new BackgroundWorker();
+				List<Matrix4X4> preArrangeTarnsforms = new List<Matrix4X4>(MeshGroupTransforms);
 
-				arrangeMeshGroupsBackgroundWorker.DoWork += new DoWorkEventHandler(arrangeMeshGroupsBackgroundWorker_DoWork);
-				arrangeMeshGroupsBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(arrangeMeshGroupsBackgroundWorker_RunWorkerCompleted);
-
-				arrangeMeshGroupsBackgroundWorker.RunWorkerAsync();
-			}
-		}
-
-		private void arrangeMeshGroupsBackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
-		{
-			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-			PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DONT_COPY);
-
-			BackgroundWorker backgroundWorker = (BackgroundWorker)sender;
-
-			// move them all out of the way
-			for (int i = 0; i < asynchMeshGroups.Count; i++)
-			{
-				ScaleRotateTranslate translate = asynchMeshGroupTransforms[i];
-				translate.translation *= Matrix4X4.CreateTranslation(10000, 10000, 0);
-				asynchMeshGroupTransforms[i] = translate;
-			}
-
-			// sort them by size
-			for (int i = 0; i < asynchMeshGroups.Count; i++)
-			{
-				AxisAlignedBoundingBox iAABB = asynchMeshGroups[i].GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[i].TotalTransform);
-				for (int j = i + 1; j < asynchMeshGroups.Count; j++)
+				await Task.Run(() =>
 				{
-					AxisAlignedBoundingBox jAABB = asynchMeshGroups[j].GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[j].TotalTransform);
-					if (Math.Max(iAABB.XSize, iAABB.YSize) < Math.Max(jAABB.XSize, jAABB.YSize))
-					{
-						PlatingMeshGroupData tempData = asynchPlatingDatas[i];
-						asynchPlatingDatas[i] = asynchPlatingDatas[j];
-						asynchPlatingDatas[j] = tempData;
+					Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+					PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DONT_COPY);
+					PlatingHelper.ArrangeMeshGroups(asyncMeshGroups, asyncMeshGroupTransforms, asyncPlatingDatas, ReportProgressChanged);
+				});
 
-						MeshGroup tempMeshGroup = asynchMeshGroups[i];
-						asynchMeshGroups[i] = asynchMeshGroups[j];
-						asynchMeshGroups[j] = tempMeshGroup;
-
-						ScaleRotateTranslate iTransform = asynchMeshGroupTransforms[i];
-						ScaleRotateTranslate jTransform = asynchMeshGroupTransforms[j];
-						Matrix4X4 tempTransform = iTransform.translation;
-						iTransform.translation = jTransform.translation;
-						jTransform.translation = tempTransform;
-
-						asynchMeshGroupTransforms[i] = jTransform;
-						asynchMeshGroupTransforms[j] = iTransform;
-
-						iAABB = jAABB;
-					}
-				}
-			}
-
-			double ratioPerMeshGroup = 1.0 / asynchMeshGroups.Count;
-			double currentRatioDone = 0;
-			// put them onto the plate (try the center) starting with the biggest and moving down
-			for (int meshGroupIndex = 0; meshGroupIndex < asynchMeshGroups.Count; meshGroupIndex++)
-			{
-				bool continueProcessing2 = true;
-				BackgroundWorker_ProgressChanged(currentRatioDone, "Calculating Positions...".Localize(), out continueProcessing2);
-
-				MeshGroup meshGroup = asynchMeshGroups[meshGroupIndex];
-				Vector3 meshLowerLeft = meshGroup.GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[meshGroupIndex].TotalTransform).minXYZ;
-				ScaleRotateTranslate atZero = asynchMeshGroupTransforms[meshGroupIndex];
-				atZero.translation *= Matrix4X4.CreateTranslation(-meshLowerLeft);
-				asynchMeshGroupTransforms[meshGroupIndex] = atZero;
-
-				PlatingHelper.MoveMeshGroupToOpenPosition(meshGroupIndex, asynchPlatingDatas, asynchMeshGroups, asynchMeshGroupTransforms);
-
-				// and create the trace info so we can select it
-				if (asynchPlatingDatas[meshGroupIndex].meshTraceableData.Count == 0)
+				if (HasBeenClosed)
 				{
-					PlatingHelper.CreateITraceableForMeshGroup(asynchPlatingDatas, asynchMeshGroups, meshGroupIndex, null);
+					return;
 				}
 
-				currentRatioDone += ratioPerMeshGroup;
-
-				// and put it on the bed
-				PlatingHelper.PlaceMeshGroupOnBed(asynchMeshGroups, asynchMeshGroupTransforms, meshGroupIndex);
-			}
-
-			// and finally center whatever we have as a group
-			{
-				AxisAlignedBoundingBox bounds = asynchMeshGroups[0].GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[0].TotalTransform);
-				for (int i = 1; i < asynchMeshGroups.Count; i++)
+				// offset them to the center of the bed
+				for (int i = 0; i < asyncMeshGroups.Count; i++)
 				{
-					bounds = AxisAlignedBoundingBox.Union(bounds, asynchMeshGroups[i].GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[i].TotalTransform));
+					asyncMeshGroupTransforms[i] *= Matrix4X4.CreateTranslation(new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center), 0));
 				}
 
-				Vector3 boundsCenter = (bounds.maxXYZ + bounds.minXYZ) / 2;
-				for (int i = 0; i < asynchMeshGroups.Count; i++)
-				{
-					ScaleRotateTranslate translate = asynchMeshGroupTransforms[i];
-					translate.translation *= Matrix4X4.CreateTranslation(-boundsCenter + new Vector3(0, 0, bounds.ZSize / 2));
-					asynchMeshGroupTransforms[i] = translate;
-				}
-			}
-		}
+				PartHasBeenChanged();
 
-		private void arrangeMeshGroupsBackgroundWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-		{
-			if (WidgetHasBeenClosed)
-			{
-				return;
-			}
-			UnlockEditControls();
-			PartHasBeenChanged();
+				PullMeshGroupDataFromAsynchLists();
+				List<Matrix4X4> postArrangeTarnsforms = new List<Matrix4X4>(MeshGroupTransforms);
 
-			PullMeshGroupDataFromAsynchLists();
+				UndoBuffer.Add(new ArangeUndoCommand(this, preArrangeTarnsforms, postArrangeTarnsforms));
+
+				UnlockEditControls();
+			}
 		}
 	}
 }

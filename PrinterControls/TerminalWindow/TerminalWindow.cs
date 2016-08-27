@@ -98,7 +98,7 @@ namespace MatterHackers.MatterControl
 			AlwaysOnTopOfMain = true;
 #if __ANDROID__
 			TerminalWidget terminalWidget = new TerminalWidget(true);
-			this.AddChild(new SoftKeyboardContentOffset(terminalWidget, SoftKeyboardContentOffset.AndroidKeyboardOffset));
+			this.AddChild(new SoftKeyboardContentOffset(terminalWidget));
 			terminalWidget.Closed += (sender, e) => { Close(); };
 #else
 			this.AddChild(new TerminalWidget(true));
@@ -106,7 +106,7 @@ namespace MatterHackers.MatterControl
 			Title = LocalizedString.Get("MatterControl - Terminal");
 			this.ShowAsSystemWindow();
 			MinimumSize = minSize;
-
+			this.Name = "Gcode Terminal";
 			string desktopPosition = UserSettings.Instance.get(TerminalWindowPositionKey);
 			if (desktopPosition != null && desktopPosition != "")
 			{

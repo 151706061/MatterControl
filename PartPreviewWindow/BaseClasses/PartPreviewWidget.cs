@@ -37,10 +37,10 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		protected readonly int ShortButtonHeight = 25;
 		protected int SideBarButtonWidth;
 
-		protected TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
+		public TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 		protected TextImageButtonFactory checkboxButtonFactory = new TextImageButtonFactory();
-		protected TextImageButtonFactory expandMenuOptionFactory = new TextImageButtonFactory();
-		protected TextImageButtonFactory whiteButtonFactory = new TextImageButtonFactory();
+		public TextImageButtonFactory ExpandMenuOptionFactory = new TextImageButtonFactory();
+		public TextImageButtonFactory WhiteButtonFactory = new TextImageButtonFactory();
 
 		protected ViewControls2D viewControls2D;
 
@@ -49,7 +49,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		public PartPreviewWidget()
 		{
-			if (ActiveTheme.Instance.DisplayMode == ActiveTheme.ApplicationDisplayType.Touchscreen)
+			if (UserSettings.Instance.DisplayMode == ApplicationDisplayType.Touchscreen)
 			{
 				SideBarButtonWidth = 180;
 				ShortButtonHeight = 40;
@@ -62,27 +62,30 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			textImageButtonFactory.normalTextColor = ActiveTheme.Instance.PrimaryTextColor;
 			textImageButtonFactory.hoverTextColor = ActiveTheme.Instance.PrimaryTextColor;
-			textImageButtonFactory.disabledTextColor = ActiveTheme.Instance.PrimaryTextColor;
 			textImageButtonFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			
+			textImageButtonFactory.disabledTextColor = ActiveTheme.Instance.TabLabelUnselected;
+			textImageButtonFactory.disabledFillColor = new RGBA_Bytes();
 
-			whiteButtonFactory.FixedWidth = SideBarButtonWidth;
-			whiteButtonFactory.FixedHeight = ShortButtonHeight;
-			whiteButtonFactory.normalFillColor = RGBA_Bytes.White;
-			whiteButtonFactory.normalTextColor = RGBA_Bytes.Black;
-			whiteButtonFactory.hoverTextColor = RGBA_Bytes.Black;
-			whiteButtonFactory.hoverFillColor = new RGBA_Bytes(255, 255, 255, 200);
-			whiteButtonFactory.borderWidth = 1;
-			whiteButtonFactory.normalBorderColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 200);
-			whiteButtonFactory.hoverBorderColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 200);
 
-			expandMenuOptionFactory.FixedWidth = SideBarButtonWidth;
-			expandMenuOptionFactory.normalTextColor = ActiveTheme.Instance.PrimaryTextColor;
-			expandMenuOptionFactory.hoverTextColor = ActiveTheme.Instance.PrimaryTextColor;
-			expandMenuOptionFactory.disabledTextColor = ActiveTheme.Instance.PrimaryTextColor;
-			expandMenuOptionFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
-			expandMenuOptionFactory.hoverFillColor = new RGBA_Bytes(255, 255, 255, 50);
-			expandMenuOptionFactory.pressedFillColor = new RGBA_Bytes(255, 255, 255, 50);
-			expandMenuOptionFactory.disabledFillColor = new RGBA_Bytes(255, 255, 255, 50);
+			WhiteButtonFactory.FixedWidth = SideBarButtonWidth;
+			WhiteButtonFactory.FixedHeight = ShortButtonHeight;
+			WhiteButtonFactory.normalFillColor = RGBA_Bytes.White;
+			WhiteButtonFactory.normalTextColor = RGBA_Bytes.Black;
+			WhiteButtonFactory.hoverTextColor = RGBA_Bytes.Black;
+			WhiteButtonFactory.hoverFillColor = new RGBA_Bytes(255, 255, 255, 200);
+			WhiteButtonFactory.borderWidth = 1;
+			WhiteButtonFactory.normalBorderColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 200);
+			WhiteButtonFactory.hoverBorderColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 200);
+
+			ExpandMenuOptionFactory.FixedWidth = SideBarButtonWidth;
+			ExpandMenuOptionFactory.normalTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			ExpandMenuOptionFactory.hoverTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			ExpandMenuOptionFactory.disabledTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			ExpandMenuOptionFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			ExpandMenuOptionFactory.hoverFillColor = new RGBA_Bytes(255, 255, 255, 50);
+			ExpandMenuOptionFactory.pressedFillColor = new RGBA_Bytes(255, 255, 255, 50);
+			ExpandMenuOptionFactory.disabledFillColor = new RGBA_Bytes(255, 255, 255, 50);
 
 			checkboxButtonFactory.fontSize = 11;
 			checkboxButtonFactory.FixedWidth = SideBarButtonWidth;

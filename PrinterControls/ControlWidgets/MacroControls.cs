@@ -30,16 +30,33 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.MatterControl.PrinterCommunication;
 using MatterHackers.MatterControl.SlicerConfiguration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace MatterHackers.MatterControl.PrinterControls
 {
 	public class MacroControls : ControlWidgetBase
 	{
+		static internal string FixMacroName(string input)
+		{
+			int lengthLimit = 24;
+
+			string result = Regex.Replace(input, @"\r\n?|\n", " ");
+
+			if (result.Length > lengthLimit)
+			{
+				result = result.Substring(0, lengthLimit) + "...";
+			}
+
+			return result;
+		}
+
+
 		protected override void AddChildElements()
 		{
 			this.AddChild(new MacroControlsWidget());
@@ -64,7 +81,7 @@ namespace MatterHackers.MatterControl.PrinterControls
 		private void SetDisplayAttributes()
 		{
 			this.textImageButtonFactory.normalFillColor = RGBA_Bytes.White;
-			this.textImageButtonFactory.FixedHeight = 24 * TextWidget.GlobalPointSizeScaleRatio;
+			this.textImageButtonFactory.FixedHeight = 24 * GuiWidget.DeviceScale;
 			this.textImageButtonFactory.fontSize = 12;
 			this.textImageButtonFactory.borderWidth = 1;
 			this.textImageButtonFactory.normalBorderColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 200);
@@ -78,20 +95,9 @@ namespace MatterHackers.MatterControl.PrinterControls
 			this.HAnchor = HAnchor.ParentLeftRight;
 		}
 
-		public override RectangleDouble LocalBounds
-		{
-			get
-			{
-				return base.LocalBounds;
-			}
-			set
-			{
-				base.LocalBounds = value;
-			}
-		}
-
 		protected void ReloadMacros(object sender, EventArgs e)
 		{
+			ActiveSliceSettings.Instance.Save();
 			ApplicationController.Instance.ReloadAdvancedControlsPanel();
 		}
 
@@ -139,40 +145,32 @@ namespace MatterHackers.MatterControl.PrinterControls
 			macroButtonContainer.Margin = new BorderDouble(3, 0);
 			macroButtonContainer.Padding = new BorderDouble(3);
 
-			IEnumerable<DataStorage.CustomCommands> macroList = GetMacros();
+			if (ActiveSliceSettings.Instance?.Macros == null)
+			{
+				return macroButtonContainer;
+			}
+
 			int buttonCount = 0;
-			foreach (DataStorage.CustomCommands m in macroList)
+			foreach (GCodeMacro macro in ActiveSliceSettings.Instance.Macros)
 			{
 				buttonCount++;
-				Button macroButton = textImageButtonFactory.Generate(m.Name);
-				macroButton.Text = m.Value;
+
+				Button macroButton = textImageButtonFactory.Generate(MacroControls.FixMacroName(macro.Name)); 
+				macroButton.Text = macro.GCode;
 				macroButton.Margin = new BorderDouble(right: 5);
-				macroButton.Click += (sender, e) =>
-				{
-					SendCommandToPrinter(macroButton.Text);
-				};
+				macroButton.Click += (s, e) => SendCommandToPrinter(macroButton.Text);
+
 				macroButtonContainer.AddChild(macroButton);
 			}
+
 			if (buttonCount == 0)
 			{
-				TextWidget noMacrosFound = new TextWidget(LocalizedString.Get("No macros are currently setup for this printer."), pointSize: 10);
+				TextWidget noMacrosFound = new TextWidget(LocalizedString.Get("No macros are currently set up for this printer."), pointSize: 10);
 				noMacrosFound.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 				macroButtonContainer.AddChild(noMacrosFound);
 			}
-			return macroButtonContainer;
-		}
 
-		private IEnumerable<DataStorage.CustomCommands> GetMacros()
-		{
-			IEnumerable<DataStorage.CustomCommands> results = Enumerable.Empty<DataStorage.CustomCommands>();
-			if (ActivePrinterProfile.Instance.ActivePrinter != null)
-			{
-				//Retrieve a list of saved printers from the Datastore
-				string query = string.Format("SELECT * FROM CustomCommands WHERE PrinterId = {0};", ActivePrinterProfile.Instance.ActivePrinter.Id);
-				results = (IEnumerable<DataStorage.CustomCommands>)DataStorage.Datastore.Instance.dbSQLite.Query<DataStorage.CustomCommands>(query);
-				return results;
-			}
-			return results;
+			return macroButtonContainer;
 		}
 
 		protected void SendCommandToPrinter(string command)

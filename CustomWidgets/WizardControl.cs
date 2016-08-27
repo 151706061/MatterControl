@@ -7,13 +7,13 @@ using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl
 {
-	public class WizardPage : GuiWidget
+	public class WizardControlPage : GuiWidget
 	{
 		private string stepDescription = "";
 
 		public string StepDescription { get { return stepDescription; } set { stepDescription = value; } }
 
-		public WizardPage(string stepDescription)
+		public WizardControlPage(string stepDescription)
 		{
 			StepDescription = stepDescription;
 		}
@@ -29,10 +29,11 @@ namespace MatterHackers.MatterControl
 
 	public class WizardControl : GuiWidget
 	{
+		double extraTextScaling = 1;
 		protected TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 
 		private FlowLayoutWidget bottomToTopLayout;
-		private List<WizardPage> pages = new List<WizardPage>();
+		private List<WizardControlPage> pages = new List<WizardControlPage>();
 		private int pageIndex = 0;
 		public Button backButton;
 		public Button nextButton;
@@ -49,9 +50,23 @@ namespace MatterHackers.MatterControl
 
 		public WizardControl()
 		{
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				extraTextScaling = 1.33333;
+			}
+			textImageButtonFactory.fontSize = extraTextScaling * textImageButtonFactory.fontSize;
+
 			FlowLayoutWidget topToBottom = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			topToBottom.AnchorAll();
-			topToBottom.Padding = new BorderDouble(3, 0, 3, 5);
+
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				topToBottom.Padding = new BorderDouble(12);
+			}
+			else
+			{
+				topToBottom.Padding = new BorderDouble(3, 0, 3, 5);
+			}
 
 			FlowLayoutWidget headerRow = new FlowLayoutWidget(FlowDirection.LeftToRight);
 			headerRow.HAnchor = HAnchor.ParentLeftRight;
@@ -60,7 +75,7 @@ namespace MatterHackers.MatterControl
 
 			{
 				string titleString = LocalizedString.Get("Title Stuff".Localize());
-				stepDescriptionWidget = new TextWidget(titleString, pointSize: 14);
+				stepDescriptionWidget = new TextWidget(titleString, pointSize: 14 * extraTextScaling);
 				stepDescriptionWidget.AutoExpandBoundsToText = true;
 				stepDescriptionWidget.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 				stepDescriptionWidget.HAnchor = HAnchor.ParentLeftRight;
@@ -91,7 +106,6 @@ namespace MatterHackers.MatterControl
 				buttonBar.HAnchor = Agg.UI.HAnchor.ParentLeftRight;
 				buttonBar.Padding = new BorderDouble(0, 3);
 
-				textImageButtonFactory.FixedWidth = 60 * TextWidget.GlobalPointSizeScaleRatio;
 				backButton = textImageButtonFactory.Generate(LocalizedString.Get("Back"), centerText: true);
 				backButton.Click += new EventHandler(back_Click);
 
@@ -196,7 +210,7 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
-		public void AddPage(WizardPage widgetForPage)
+		public void AddPage(WizardControlPage widgetForPage)
 		{
 			pages.Add(widgetForPage);
 			bottomToTopLayout.AddChild(widgetForPage);

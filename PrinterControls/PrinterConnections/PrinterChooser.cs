@@ -30,121 +30,48 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using System.Collections.Generic;
 using MatterHackers.MatterControl.SettingsManagement;
 using System.IO;
 using System.Linq;
 
 namespace MatterHackers.MatterControl
 {
-	public class PrinterChooser : GuiWidget
+	public class BoundDropList : DropDownList
 	{
-		public StyledDropDownList ManufacturerDropList;
-		private int countOfMakes = 0;
+		private List<KeyValuePair<string, string>> listSource;
 
-		public int CountOfMakes { get { return countOfMakes; } }
-
-		public PrinterChooser(string selectedMake = null)
+		public BoundDropList(string noSelectionString, int maxHeight = 0)
+			: base(noSelectionString, maxHeight: maxHeight)
 		{
-			string defaultManufacturerLabel = LocalizedString.Get("Select Make");
-			string defaultManufacturerLabelFull = string.Format("- {0} -", defaultManufacturerLabel);
-			ManufacturerDropList = new StyledDropDownList(defaultManufacturerLabelFull, maxHeight: 200);
-			bool addOther = false;
-			string[] printerWhiteListStrings = OemSettings.Instance.PrinterWhiteList.ToArray();
-			string pathToManufacturers = "PrinterSettings";
-			if (StaticData.Instance.DirectoryExists(pathToManufacturers))
-			{
-				int index = 0;
-				int preselectIndex = -1;
-				foreach (string manufacturerDirectory in StaticData.Instance.GetDirectories(pathToManufacturers))
-				{
-					string folderName = Path.GetFileName(manufacturerDirectory.TrimEnd(new[] { '/', '\\' }));
-
-					if (printerWhiteListStrings.Contains(folderName))
-					{
-						string manufacturer = Path.GetFileName(manufacturerDirectory);
-						if (manufacturer == "Other")
-						{
-							addOther = true;
-						}
-						else
-						{
-							ManufacturerDropList.AddItem(manufacturer);
-							if (selectedMake != null)
-							{
-								if (manufacturer == selectedMake)
-								{
-									preselectIndex = index;
-								}
-							}
-
-							index++;
-						}
-						countOfMakes += 1;
-					}
-				}
-				if (addOther)
-				{
-					if (selectedMake != null && preselectIndex == -1)
-					{
-						preselectIndex = index;
-					}
-					ManufacturerDropList.AddItem(LocalizedString.Get("Other"));
-				}
-				if (preselectIndex != -1)
-				{
-					ManufacturerDropList.SelectedIndex = preselectIndex;
-				}
-			}
-
-			if (ManufacturerDropList.MenuItems.Count == 1)
-			{
-				ManufacturerDropList.SelectedIndex = 0;
-			}
-
-			AddChild(ManufacturerDropList);
-
-			HAnchor = HAnchor.FitToChildren;
-			VAnchor = VAnchor.FitToChildren;
-		}
-	}
-
-	public class ModelChooser : GuiWidget
-	{
-		public StyledDropDownList ModelDropList;
-		private int countOfModels = 0;
-
-		public int CountOfModels { get { return countOfModels; } }
-
-		public ModelChooser(string manufacturer)
-		{
-			string defaultModelDropDownLabel = LocalizedString.Get("Select Model");
-			string defaultModelDropDownLabelFull = string.Format("- {0} -", defaultModelDropDownLabel);
-			ModelDropList = new StyledDropDownList(defaultModelDropDownLabelFull, maxHeight: 200);
-
-			string pathToModels = Path.Combine("PrinterSettings", manufacturer);
-			if (StaticData.Instance.DirectoryExists((pathToModels)))
-			{
-				foreach (string manufacturerDirectory in StaticData.Instance.GetDirectories(pathToModels))
-				{
-					string model = Path.GetFileName(manufacturerDirectory);
-					ModelDropList.AddItem(model);
-					countOfModels += 1;
-				}
-			}
-
-			ModelDropList.AddItem(LocalizedString.Get("Other"));
-			AddChild(ModelDropList);
-
-			HAnchor = HAnchor.FitToChildren;
-			VAnchor = VAnchor.FitToChildren;
 		}
 
-		public void SelectIfOnlyOneModel()
+		public List<KeyValuePair<string, string>> ListSource
 		{
-			if (ModelDropList.MenuItems.Count == 2)
+			get
 			{
-				ModelDropList.SelectedIndex = 0;
+				return listSource;
+			}
+			set
+			{
+				if (listSource == value)
+				{
+					return;
+				}
+
+				MenuItems.Clear();
+				SelectedIndex = -1;
+
+				listSource = value;
+
+				foreach (var keyValue in listSource)
+				{
+					AddItem(keyValue.Key, keyValue.Value);
+				}
+
+				Invalidate();
 			}
 		}
 	}
 }
+ 

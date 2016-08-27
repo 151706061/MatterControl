@@ -47,7 +47,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		}
 	}
 
-	public class PartPreview3DWidget : PartPreviewWidget
+	public abstract class PartPreview3DWidget : PartPreviewWidget
 	{
 		protected static readonly int DefaultScrollBarWidth = 120;
 
@@ -63,35 +63,43 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		public PartPreview3DWidget()
 		{
-			SliceSettingsWidget.RegisterForSettingsChange("bed_size", SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("print_center", SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("build_height", SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("bed_shape", SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("center_part_on_bed", SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
+			SliceSettingsWidget.SettingChanged.RegisterEvent(CheckSettingChanged, ref unregisterEvents);
+			ApplicationController.Instance.AdvancedControlsPanelReloading.RegisterEvent(CheckSettingChanged, ref unregisterEvents);
 #if false
             "extruder_offset",
 #endif
 
-			ActivePrinterProfile.Instance.ActivePrinterChanged.RegisterEvent(SetFlagToRecreateBedAndPartPosition, ref unregisterEvents);
+			ActiveSliceSettings.ActivePrinterChanged.RegisterEvent((s, e) => needToRecretaeBed = true, ref unregisterEvents);
 		}
 
-		private void SetFlagToRecreateBedAndPartPosition(object sender, EventArgs e)
+		private void CheckSettingChanged(object sender, EventArgs e)
 		{
-			needToRecretaeBed = true;
+			StringEventArgs stringEvent = e as StringEventArgs;
+			if (stringEvent != null)
+			{
+				if (stringEvent.Data == SettingsKey.bed_size
+					|| stringEvent.Data == SettingsKey.print_center
+					|| stringEvent.Data == SettingsKey.build_height
+					|| stringEvent.Data == SettingsKey.bed_shape
+					|| stringEvent.Data == SettingsKey.center_part_on_bed)
+				{
+					needToRecretaeBed = true;
+				}
+			}
 		}
 
 		private void RecreateBed()
 		{
-			double buildHeight = ActiveSliceSettings.Instance.BuildHeight;
+			double buildHeight = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.build_height);
 
-			UiThread.RunOnIdle((state) =>
+			UiThread.RunOnIdle((Action)(() =>
 			{
 				meshViewerWidget.CreatePrintBed(
-					new Vector3(ActiveSliceSettings.Instance.BedSize, buildHeight),
-					ActiveSliceSettings.Instance.BedCenter,
-					ActiveSliceSettings.Instance.BedShape);
+					new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size), buildHeight),
+					ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center),
+					ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape));
 				PutOemImageOnBed();
-			});
+			}));
 		}
 
 		public override void OnDraw(Graphics2D graphics2D)
@@ -104,18 +112,21 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			base.OnDraw(graphics2D);
 		}
 
+		static ImageBuffer wattermarkImage = null;
 		protected void PutOemImageOnBed()
 		{
 			// this is to add an image to the bed
 			string imagePathAndFile = Path.Combine("OEMSettings", "bedimage.png");
 			if (allowAutoRotate && StaticData.Instance.FileExists(imagePathAndFile))
 			{
-				ImageBuffer wattermarkImage = StaticData.Instance.LoadImage(imagePathAndFile);
+				if (wattermarkImage == null)
+				{
+					wattermarkImage = StaticData.Instance.LoadImage(imagePathAndFile);
+				}
 
-				ImageBuffer bedImage = meshViewerWidget.BedImage;
+				ImageBuffer bedImage = MeshViewerWidget.BedImage;
 				Graphics2D bedGraphics = bedImage.NewGraphics2D();
-				bedGraphics.Render(wattermarkImage,
-					new Vector2((bedImage.Width - wattermarkImage.Width) / 2, (bedImage.Height - wattermarkImage.Height) / 2));
+				bedGraphics.Render(wattermarkImage, new Vector2((bedImage.Width - wattermarkImage.Width) / 2, (bedImage.Height - wattermarkImage.Height) / 2));
 			}
 		}
 
@@ -131,7 +142,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		protected static SolidSlider InsertUiForSlider(FlowLayoutWidget wordOptionContainer, string header, double min = 0, double max = .5)
 		{
 			double scrollBarWidth = 10;
-			if (ActiveTheme.Instance.DisplayMode == ActiveTheme.ApplicationDisplayType.Touchscreen)
+			if (UserSettings.Instance.DisplayMode == ApplicationDisplayType.Touchscreen)
 			{
 				scrollBarWidth = 20;
 			}

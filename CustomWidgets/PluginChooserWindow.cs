@@ -32,6 +32,7 @@ using MatterHackers.Agg.Image;
 using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
@@ -68,7 +69,7 @@ namespace MatterHackers.MatterControl.CreatorPlugins
 
 		protected void AddHandlers()
 		{
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
+			ActiveTheme.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
 		}
 
 		public void ThemeChanged(object sender, EventArgs e)
@@ -81,7 +82,7 @@ namespace MatterHackers.MatterControl.CreatorPlugins
 			UiThread.RunOnIdle(Reload);
 		}
 
-		public void Reload(object state)
+		public void Reload()
 		{
 			this.RemoveAllChildren();
 			this.AddElements();
@@ -184,16 +185,14 @@ namespace MatterHackers.MatterControl.CreatorPlugins
 
 				if (!userHasPermission)
 				{
-					TextWidget demoLabel = new TextWidget("(demo)", pointSize: 10);
+					TextWidget demoLabel = new TextWidget("(" + "demo".Localize() + ")", pointSize: 10);
 
 					demoLabel.Margin = new BorderDouble(left: 4);
 					demoLabel.VAnchor = Agg.UI.VAnchor.ParentCenter;
 					macroRow.AddChild(demoLabel);
 				}
 
-				FlowLayoutWidget hSpacer = new FlowLayoutWidget();
-				hSpacer.HAnchor = Agg.UI.HAnchor.ParentLeftRight;
-				macroRow.AddChild(hSpacer);
+				macroRow.AddChild(new HorizontalSpacer());
 
 				CreatorInformation callCorrectFunctionHold = creatorInfo;
 				pluginRow.Click += (sender, e) =>
@@ -216,7 +215,7 @@ namespace MatterHackers.MatterControl.CreatorPlugins
 
 				if (!userHasPermission)
 				{
-					Button unlockButton = unlockButtonFactory.Generate("Unlock");
+					Button unlockButton = unlockButtonFactory.Generate("Unlock".Localize());
 					unlockButton.Margin = new BorderDouble(0);
 					unlockButton.Cursor = Cursors.Hand;
 					unlockButton.Click += (sender, e) =>
@@ -263,7 +262,7 @@ namespace MatterHackers.MatterControl.CreatorPlugins
 			CreatorInformation callCorrectFunctionHold = state as CreatorInformation;
 			if (callCorrectFunctionHold != null)
 			{
-				UiThread.RunOnIdle((state2) =>
+				UiThread.RunOnIdle(() =>
 				{
 					callCorrectFunctionHold.functionToLaunchCreator(null, null);
 				});

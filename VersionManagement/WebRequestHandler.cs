@@ -27,126 +27,58 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
+using MatterHackers.Localizations;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.VersionManagement
 {
-	public class WebRequestBase
+	public class ResponseErrorEventArgs : EventArgs
 	{
-		protected string uri;
+		public JsonResponseDictionary ResponseValues { get; set; }
+	}
+
+	public class ResponseSuccessEventArgs<ResponseType> : EventArgs
+	{
+		public ResponseType ResponseItem { get; set; }
+	}
+
+	public class WebRequestBase<ResponseType> where ResponseType : class
+	{
 		protected Dictionary<string, string> requestValues;
-
-		public event EventHandler RequestSucceeded;
-
-		public event EventHandler RequestFailed;
-
-		public event EventHandler RequestComplete;
-
-		protected void OnRequestSuceeded()
-		{
-			if (RequestSucceeded != null)
-			{
-				RequestSucceeded(this, null);
-			}
-		}
-
-		//This gets called after failure or success
-		protected void OnRequestComplete()
-		{
-			if (RequestComplete != null)
-			{
-				RequestComplete(this, null);
-			}
-		}
-
-		protected void OnRequestFailed()
-		{
-			if (RequestFailed != null)
-			{
-				RequestFailed(this, null);
-			}
-		}
+		protected string uri;
 
 		public WebRequestBase()
 		{
 			requestValues = new Dictionary<string, string>();
 		}
 
-		protected virtual string getJsonToSend()
+		public int Timeout { get; set; } = 100000;
+
+		public event EventHandler RequestComplete;
+
+		public event EventHandler<ResponseErrorEventArgs> RequestFailed;
+
+		public event EventHandler<ResponseSuccessEventArgs<ResponseType>> RequestSucceeded;
+		public static void Request(string requestUrl, string[] requestStringPairs)
 		{
-			return SerializeObject(requestValues);
+			WebRequestBase<ResponseType> tempRequest = new WebRequestBase<ResponseType>();
+
+			tempRequest.SetRquestValues(requestUrl, requestStringPairs);
+
+			tempRequest.Request();
 		}
 
-		protected string SerializeObject(object requestObject)
+		public void SetRquestValues(string requestUrl, string[] requestStringPairs)
 		{
-			return Newtonsoft.Json.JsonConvert.SerializeObject(requestObject);
-		}
-
-		protected virtual void SendRequest(object sender, DoWorkEventArgs e)
-		{
-			JsonResponseDictionary responseValues;
-
-			RequestManager requestManager = new RequestManager();
-			string jsonToSend = getJsonToSend();
-
-			requestManager.SendPOSTRequest(uri, jsonToSend, "", "", false);
-			if (requestManager.LastResponse == null)
+			this.uri = requestUrl;
+			for (int i = 0; i < requestStringPairs.Length; i += 2)
 			{
-				responseValues = new JsonResponseDictionary();
-				responseValues["Status"] = "error";
-				responseValues["ErrorMessage"] = "Unable to connect to server";
-				responseValues["ErrorCode"] = "00";
+				this.requestValues[requestStringPairs[i]] = requestStringPairs[i + 1];
 			}
-			else
-			{
-				try
-				{
-					responseValues = JsonConvert.DeserializeObject<JsonResponseDictionary>(requestManager.LastResponse);
-				}
-				catch
-				{
-					responseValues = new JsonResponseDictionary();
-					responseValues["Status"] = "error";
-					responseValues["ErrorMessage"] = "Unexpected response";
-					responseValues["ErrorCode"] = "01";
-				}
-			}
-
-			e.Result = responseValues;
-		}
-
-		protected virtual void ProcessResponse(object sender, RunWorkerCompletedEventArgs e)
-		{
-			JsonResponseDictionary responseValues = e.Result as JsonResponseDictionary;
-
-			if (responseValues != null)
-			{
-				string requestSuccessStatus = responseValues.get("Status");
-				if (responseValues != null && requestSuccessStatus != null && requestSuccessStatus == "success")
-				{
-					ProcessSuccessResponse(responseValues);
-					OnRequestSuceeded();
-				}
-				else
-				{
-					ProcessErrorResponse(responseValues);
-					OnRequestFailed();
-				}
-
-				OnRequestComplete();
-			}
-			else
-			{
-				// Don't do anything, there was no respones.
-			}
-		}
-
-		public virtual void ProcessSuccessResponse(JsonResponseDictionary responseValues)
-		{
-			//Do Stuff
 		}
 
 		public virtual void ProcessErrorResponse(JsonResponseDictionary responseValues)
@@ -162,6 +94,145 @@ namespace MatterHackers.MatterControl.VersionManagement
 			}
 		}
 
+		public async void Request()
+		{
+			await Task.Run((Action)SendRequest);
+		}
+
+		//This gets called after failure or success
+		protected void OnRequestComplete()
+		{
+			if (RequestComplete != null)
+			{
+				RequestComplete(this, null);
+			}
+		}
+
+		protected void OnRequestFailed(JsonResponseDictionary responseValues)
+		{
+			if (RequestFailed != null)
+			{
+				RequestFailed(this, new ResponseErrorEventArgs() { ResponseValues = responseValues });
+			}
+		}
+
+		protected void OnRequestSuceeded(ResponseType responseItem)
+		{
+			EventHandler<ResponseSuccessEventArgs<ResponseType>> tempHandler = RequestSucceeded;
+			if (tempHandler != null)
+			{
+				tempHandler(this, new ResponseSuccessEventArgs<ResponseType>() { ResponseItem = responseItem });
+			}
+		}
+		protected void SendRequest()
+		{
+			RequestManager requestManager = new RequestManager();
+
+// Prevent constant exceptions on debug builds when stepping through code. In debug, let requests stay in limbo until resumed and prevent the timeout exceptions
+#if !DEBUG
+			requestManager.Timeout = this.Timeout;
+#endif
+			string jsonToSend = JsonConvert.SerializeObject(requestValues);
+
+			System.Diagnostics.Trace.Write(string.Format("ServiceRequest: {0}\r\n  {1}\r\n", uri, string.Join("\r\n\t", jsonToSend.Split(','))));
+
+			requestManager.SendPOSTRequest(uri, jsonToSend, "", "", false);
+
+			ResponseType responseItem = null;
+			JsonResponseDictionary errorResults = null;
+
+			if (requestManager.LastResponse != null)
+			{
+				try
+				{
+					responseItem = JsonConvert.DeserializeObject<ResponseType>(requestManager.LastResponse);
+				}
+				catch
+				{
+					errorResults = JsonConvert.DeserializeObject<JsonResponseDictionary>(requestManager.LastResponse);
+				}
+			}
+
+			if (responseItem != null)
+			{
+				OnRequestSuceeded(responseItem);
+			}
+			else
+			{
+				OnRequestFailed(errorResults);
+			}
+
+			OnRequestComplete();
+		}
+	}
+
+	/// <summary>
+	/// Provides a WebReqeustBase implementation that allows the caller to specify the serialization object used by the WebRequestBase http post
+	/// </summary>
+	/// <typeparam name="RequestType">The type which will be passed to the Request method, stored in a local instance and serialized for the http post</typeparam>
+	public class WebRequest2<RequestType> : WebRequestBase where RequestType : class
+	{
+		private RequestType localRequestValues;
+
+		public void Request(string requestUrl, RequestType requestValues)
+		{
+			this.uri = requestUrl;
+			localRequestValues = requestValues;
+			this.Request();
+		}
+
+		protected override string getJsonToSend()
+		{
+			return JsonConvert.SerializeObject(localRequestValues);
+		}
+	}
+
+
+	public class WebRequestBase
+	{
+		protected Dictionary<string, string> requestValues;
+		protected string uri;
+		public WebRequestBase()
+		{
+			requestValues = new Dictionary<string, string>();
+		}
+
+		public event EventHandler RequestComplete;
+
+		public event EventHandler<ResponseErrorEventArgs> RequestFailed;
+
+		public event EventHandler RequestSucceeded;
+		public static void Request(string requestUrl, string[] requestStringPairs)
+		{
+			WebRequestBase tempRequest = new WebRequestBase();
+
+			tempRequest.uri = requestUrl;
+			for (int i = 0; i < requestStringPairs.Length; i += 2)
+			{
+				tempRequest.requestValues[requestStringPairs[i]] = requestStringPairs[i + 1];
+			}
+
+			tempRequest.Request();
+		}
+
+		public virtual void ProcessErrorResponse(JsonResponseDictionary responseValues)
+		{
+			string errorMessage = responseValues.get("ErrorMessage");
+			if (errorMessage != null)
+			{
+				Console.WriteLine(string.Format("Request Failed: {0}", errorMessage));
+			}
+			else
+			{
+				Console.WriteLine(string.Format("Request Failed: Unknown Reason"));
+			}
+		}
+
+		public virtual void ProcessSuccessResponse(JsonResponseDictionary responseValues)
+		{
+			//Do Stuff
+		}
+
 		public virtual void Request()
 		{
 			BackgroundWorker doRequestWorker = new BackgroundWorker();
@@ -169,137 +240,110 @@ namespace MatterHackers.MatterControl.VersionManagement
 			doRequestWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(ProcessResponse);
 			doRequestWorker.RunWorkerAsync();
 		}
-	}
 
-	//To do - move this
-	internal class ContactFormRequest : WebRequestBase
-	{
-		public ContactFormRequest(string question, string details, string email, string firstName, string lastName)
+		protected virtual string getJsonToSend()
 		{
-			requestValues["FirstName"] = firstName;
-			requestValues["LastName"] = lastName;
-			requestValues["Email"] = email;
-			requestValues["FeedbackType"] = "Question";
-			requestValues["Comment"] = string.Format("{0}\n{1}", question, details);
-			uri = "https://mattercontrol.appspot.com/api/1/submit-feedback";
+			return SerializeObject(requestValues);
 		}
 
-		public override void ProcessSuccessResponse(JsonResponseDictionary responseValues)
+		//This gets called after failure or success
+		protected void OnRequestComplete()
 		{
-			JsonResponseDictionary response = responseValues;
-		}
-
-		public override void Request()
-		{
-			//If the client token exists, use it, otherwise wait for client token before making request
-			if (ApplicationSettings.Instance.get("ClientToken") == null)
+			if (RequestComplete != null)
 			{
-				RequestClientToken request = new RequestClientToken();
-				request.RequestSucceeded += new EventHandler(onClientTokenRequestSucceeded);
-				request.Request();
+				RequestComplete(this, null);
+			}
+		}
+
+		protected void OnRequestFailed(JsonResponseDictionary responseValues)
+		{
+			if (RequestFailed != null)
+			{
+				RequestFailed(this, new ResponseErrorEventArgs() { ResponseValues = responseValues });
+			}
+		}
+
+		protected void OnRequestSuceeded()
+		{
+			if (RequestSucceeded != null)
+			{
+				RequestSucceeded(this, null);
+			}
+		}
+		protected virtual void ProcessResponse(object sender, RunWorkerCompletedEventArgs e)
+		{
+			JsonResponseDictionary responseValues = e.Result as JsonResponseDictionary;
+			if (responseValues != null)
+			{
+				string requestSuccessStatus = responseValues.get("Status");
+				if (responseValues != null && requestSuccessStatus != null && requestSuccessStatus == "success")
+				{
+					ProcessSuccessResponse(responseValues);
+					OnRequestSuceeded();
+				}
+				else
+				{
+					ProcessErrorResponse(responseValues);
+					OnRequestFailed(responseValues);
+				}
+
+				OnRequestComplete();
 			}
 			else
 			{
-				onClientTokenReady();
+				// Don't do anything, there was no respones.
 			}
 		}
 
-		private void onClientTokenRequestSucceeded(object sender, EventArgs e)
+		protected virtual void SendRequest(object sender, DoWorkEventArgs e)
 		{
-			onClientTokenReady();
-		}
+			JsonResponseDictionary responseValues;
 
-		public void onClientTokenReady()
-		{
-			string clientToken = ApplicationSettings.Instance.get("ClientToken");
-			requestValues["ClientToken"] = clientToken;
-			if (clientToken != null)
+			RequestManager requestManager = new RequestManager();
+			string jsonToSend = getJsonToSend();
+
+			System.Diagnostics.Trace.Write(string.Format("ServiceRequest: {0}\r\n  {1}\r\n", uri, string.Join("\r\n\t", jsonToSend.Split(','))));
+
+			requestManager.SendPOSTRequest(uri, jsonToSend, "", "", false);
+			if (requestManager.LastResponse == null)
 			{
-				base.Request();
-			}
-		}
-	}
-
-	public class RequestClientToken : WebRequestBase
-	{
-		public RequestClientToken()
-		{
-			requestValues["RequestToken"] = "ekshdsd5d5ssss5kels";
-			requestValues["ProjectToken"] = VersionInfo.Instance.ProjectToken;
-			uri = "https://mattercontrol.appspot.com/api/1/get-client-consumer-token";
-		}
-
-		public override void ProcessSuccessResponse(JsonResponseDictionary responseValues)
-		{
-			string clientToken = responseValues.get("ClientToken");
-			if (clientToken != null)
-			{
-				ApplicationSettings.Instance.set("ClientToken", clientToken);
-			}
-		}
-	}
-
-	internal class RequestLatestVersion : WebRequestBase
-	{
-		public RequestLatestVersion()
-		{
-			string feedType = UserSettings.Instance.get("UpdateFeedType");
-			if (feedType == null)
-			{
-				feedType = "release";
-				UserSettings.Instance.set("UpdateFeedType", feedType);
-			}
-			requestValues["ProjectToken"] = VersionInfo.Instance.ProjectToken;
-			requestValues["UpdateFeedType"] = feedType;
-			uri = "https://mattercontrol.appspot.com/api/1/get-current-release-version";
-		}
-
-		public override void Request()
-		{
-			//If the client token exists, use it, otherwise wait for client token before making request
-			if (ApplicationSettings.Instance.get("ClientToken") == null)
-			{
-				RequestClientToken request = new RequestClientToken();
-				request.RequestSucceeded += new EventHandler(onRequestSucceeded);
-				request.Request();
+				responseValues = new JsonResponseDictionary();
+				responseValues["Status"] = "error";
+				responseValues["ErrorMessage"] = "Unable to connect to server";
+				responseValues["ErrorCode"] = "00";
 			}
 			else
 			{
-				onClientTokenReady();
+				try
+				{
+					responseValues = JsonConvert.DeserializeObject<JsonResponseDictionary>(requestManager.LastResponse);
+
+					string errorMessage;
+					if (responseValues.TryGetValue("ErrorMessage", out errorMessage) && errorMessage.IndexOf("expired session") != -1)
+					{
+						// TODO: Map more error conditions (beyond just session expired) to CredentialsInvalid status
+						UserSettings.Instance.set("CredentialsInvalid", "true");
+						UserSettings.Instance.set("CredentialsInvalidReason", "Session Expired".Localize());
+
+						// Notify connection status changed and now invalid
+						ApplicationController.Instance.ChangeCloudSyncStatus(false);
+					}
+				}
+				catch
+				{
+					responseValues = new JsonResponseDictionary();
+					responseValues["Status"] = "error";
+					responseValues["ErrorMessage"] = "Unexpected response";
+					responseValues["ErrorCode"] = "01";
+				}
 			}
+
+			e.Result = responseValues;
 		}
 
-		private void onRequestSucceeded(object sender, EventArgs e)
+		protected string SerializeObject(object requestObject)
 		{
-			onClientTokenReady();
-		}
-
-		public void onClientTokenReady()
-		{
-			string clientToken = ApplicationSettings.Instance.get("ClientToken");
-			requestValues["ClientToken"] = clientToken;
-			if (clientToken != null)
-			{
-				base.Request();
-			}
-		}
-
-		public override void ProcessSuccessResponse(JsonResponseDictionary responseValues)
-		{
-			List<string> responseKeys = new List<string> { "CurrentBuildToken", "CurrentBuildNumber", "CurrentBuildUrl", "CurrentReleaseVersion", "CurrentReleaseDate" };
-			foreach (string key in responseKeys)
-			{
-				saveResponse(key, responseValues);
-			}
-		}
-
-		private void saveResponse(string key, JsonResponseDictionary responseValues)
-		{
-			string value = responseValues.get(key);
-			if (value != null)
-			{
-				ApplicationSettings.Instance.set(key, value);
-			}
+			return Newtonsoft.Json.JsonConvert.SerializeObject(requestObject);
 		}
 	}
 }

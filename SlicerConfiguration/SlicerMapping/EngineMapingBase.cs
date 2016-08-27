@@ -27,10 +27,70 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
+using System.Collections.Generic;
+
 namespace MatterHackers.MatterControl.SlicerConfiguration
 {
-	public abstract class SliceEngineMaping
+	public abstract class SliceEngineMapping
 	{
-		public abstract bool MapContains(string defaultKey);
+		private string engineName;
+
+		/// <summary>
+		/// Application level settings control MatterControl behaviors but aren't used or passed through to the slice engine. Putting settings
+		/// in this list ensures they show up for all slice engines and the lack of a MappedSetting for the engine guarantees that it won't pass
+		/// through into the slicer config file
+		/// </summary>
+		protected HashSet<string> applicationLevelSettings = new HashSet<string>()
+		{
+			SettingsKey.bed_shape,
+			SettingsKey.bed_size,
+			SettingsKey.bed_temperature,
+			SettingsKey.build_height,
+			SettingsKey.cancel_gcode,
+			SettingsKey.connect_gcode,
+			SettingsKey.has_fan,
+			SettingsKey.has_hardware_leveling,
+			SettingsKey.has_heated_bed,
+			SettingsKey.has_power_control,
+			SettingsKey.has_sd_card_reader,
+			SettingsKey.printer_name,
+			SettingsKey.auto_connect,
+			SettingsKey.baud_rate,
+			SettingsKey.com_port,
+			SettingsKey.filament_cost,
+			SettingsKey.filament_density,
+			"manual_probe_paper_width",
+			SettingsKey.pause_gcode,
+			"print_leveling_method",
+			"print_leveling_required_to_print",
+			"print_leveling_solution",
+			"resume_first_layer_speed",
+			"resume_is_enabled",
+			"resume_position_before_z_home",
+			SettingsKey.resume_gcode,
+			"temperature",
+			"z_can_be_negative",
+			"z_homes_to_max",
+
+			// TODO: merge the items below into the list above after some validation - setting that weren't previously mapped to Cura but probably should be. 
+			SettingsKey.bed_remove_part_temperature,
+			"extruder_wipe_temperature",
+			SettingsKey.heat_extruder_before_homing,
+			"include_firmware_updater",
+			"layer_to_pause",
+			SettingsKey.show_reset_connection,
+			SettingsKey.make,
+			SettingsKey.model,
+			
+		};
+
+		public SliceEngineMapping(string engineName)
+		{
+			this.engineName = engineName;
+		}
+
+		public string Name { get { return engineName; } }
+
+		public abstract bool MapContains(string canonicalSettingsName);
 	}
 }

@@ -4,6 +4,7 @@ using MatterHackers.Agg.UI;
 using MatterHackers.Agg.VertexSource;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.DataStorage;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.SerialPortCommunication.FrostedSerial;
 
 using System;
@@ -36,22 +37,11 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 		}
 	}
 
-	public class BaudRateRadioButton : RadioButton
-	{
-		public int BaudRate;
-
-		public BaudRateRadioButton(string label)
-			: base(label)
-		{
-			BaudRate = int.Parse(label);
-		}
-	}
-
 	public class PrinterSelectRadioButton : RadioButton
 	{
-		public Printer printer;
+		public PrinterInfo printer;
 
-		public PrinterSelectRadioButton(Printer printer)
+		public PrinterSelectRadioButton(PrinterInfo printer)
 			: base(printer.Name)
 		{
 			this.printer = printer;
@@ -79,12 +69,12 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 	public class ActionLinkFactory
 	{
-		public ActionLink Generate(string linkText, int fontSize, GuiWidget.MouseEventHandler clickEvent)
+		public ActionLink Generate(string linkText, int fontSize, EventHandler<MouseEventArgs> clickEvent)
 		{
 			ActionLink actionLink = new ActionLink(linkText, fontSize);
 			if (clickEvent != null)
 			{
-				actionLink.MouseUp += new GuiWidget.MouseEventHandler(clickEvent);
+				actionLink.MouseUp += clickEvent;
 			}
 			return actionLink;
 		}
@@ -131,9 +121,9 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 	public class PrinterActionLink : ActionLink
 	{
-		public Printer LinkedPrinter;
+		public PrinterInfo LinkedPrinter;
 
-		public PrinterActionLink(string text, Printer printer, int fontSize = 10)
+		public PrinterActionLink(string text, PrinterInfo printer, int fontSize = 10)
 			: base(text, fontSize)
 		{
 			this.LinkedPrinter = printer;
@@ -238,132 +228,6 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			graphics2D.Render(rectInside, this.fillColor);
 
 			base.OnDraw(graphics2D);
-		}
-	}
-
-	public class ConnectionWidgetBase : GuiWidget
-	{
-		private static Regex linuxDefaultUIFilter = new Regex("/dev/ttyS*\\d+", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-		protected List<SerialPortIndexRadioButton> SerialPortButtonsList = new List<SerialPortIndexRadioButton>();
-		private bool printerComPortIsAvailable = false;
-
-		protected GuiWidget containerWindowToClose;
-		protected RGBA_Bytes defaultTextColor = ActiveTheme.Instance.PrimaryTextColor;
-		protected RGBA_Bytes defaultBackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
-		protected RGBA_Bytes subContainerTextColor = ActiveTheme.Instance.PrimaryTextColor;
-		protected RGBA_Bytes labelBackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
-		protected RGBA_Bytes linkTextColor = ActiveTheme.Instance.SecondaryAccentColor;
-		protected ConnectionWindow windowController;
-		public ActionLinkFactory actionLinkFactory = new ActionLinkFactory();
-
-		private event EventHandler unregisterEvents;
-
-		public ConnectionWidgetBase(ConnectionWindow windowController, GuiWidget containerWindowToClose)
-			: base()
-		{
-			this.windowController = windowController;
-			this.containerWindowToClose = containerWindowToClose;
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
-		}
-
-		public int GetPrinterRecordCount()
-		{
-			return Datastore.Instance.RecordCount("Printer");
-		}
-
-		public void ThemeChanged(object sender, EventArgs e)
-		{
-			this.linkTextColor = ActiveTheme.Instance.PrimaryAccentColor;
-			this.Invalidate();
-		}
-
-		public override void OnClosed(EventArgs e)
-		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
-			base.OnClosed(e);
-		}
-
-		private SerialPortIndexRadioButton createComPortOption(string portName, bool isActivePrinterPort)
-		{
-			SerialPortIndexRadioButton comPortOption = new SerialPortIndexRadioButton(portName, portName)
-			{
-				HAnchor = HAnchor.ParentLeft,
-				Margin = new BorderDouble(3, 3, 5, 3),
-				TextColor = this.subContainerTextColor,
-				Checked = isActivePrinterPort
-			};
-			return comPortOption;
-		}
-
-		protected string GetSelectedSerialPort()
-		{
-			foreach (SerialPortIndexRadioButton button in SerialPortButtonsList)
-			{
-				if (button.Checked)
-				{
-					return button.PortValue;
-				}
-			}
-
-			throw new Exception(LocalizedString.Get("Could not find a selected button."));
-		}
-
-		protected void CreateSerialPortControls(FlowLayoutWidget comPortContainer, string activePrinterSerialPort)
-		{
-			int portIndex = 0;
-			string[] allPorts = FrostedSerialPort.GetPortNames();
-			IEnumerable<string> filteredPorts;
-
-			if (OsInformation.OperatingSystem == OSType.X11)
-			{
-				// A default and naive filter that works well on Ubuntu 14
-				filteredPorts = allPorts.Where(portName => portName != "/dev/tty" && !linuxDefaultUIFilter.Match(portName).Success);
-			}
-			else
-			{
-				// looks_like_mac -- serialPort.StartsWith("/dev/tty."); looks_like_pc -- serialPort.StartsWith("COM")
-				filteredPorts = allPorts.Where(portName => portName.StartsWith("/dev/tty.") || portName.StartsWith("COM"));
-			}
-
-			IEnumerable<string> portsToCreate = filteredPorts.Any() ? filteredPorts : allPorts;
-
-			// Add a radio button for each filtered port
-			foreach (string portName in portsToCreate)
-			{
-				SerialPortIndexRadioButton comPortOption = createComPortOption(portName, activePrinterSerialPort == portName);
-				if (comPortOption.Checked)
-				{
-					printerComPortIsAvailable = true;
-				}
-
-				SerialPortButtonsList.Add(comPortOption);
-				comPortContainer.AddChild(comPortOption);
-
-				portIndex++;
-			}
-
-			// Add a virtual entry for serial ports that were previously configured but are not currently connected
-			if (!printerComPortIsAvailable && activePrinterSerialPort != null)
-			{
-				SerialPortIndexRadioButton comPortOption = createComPortOption(activePrinterSerialPort, true);
-				comPortOption.Enabled = false;
-
-				comPortContainer.AddChild(comPortOption);
-				SerialPortButtonsList.Add(comPortOption);
-				portIndex++;
-			}
-
-			//If there are still no com ports show a message to that effect
-			if (portIndex == 0)
-			{
-				TextWidget comPortOption = new TextWidget(LocalizedString.Get("No COM ports available"));
-				comPortOption.Margin = new BorderDouble(3, 6, 5, 6);
-				comPortOption.TextColor = this.subContainerTextColor;
-				comPortContainer.AddChild(comPortOption);
-			}
 		}
 	}
 }

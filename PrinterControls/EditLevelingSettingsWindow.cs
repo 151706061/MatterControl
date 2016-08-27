@@ -31,9 +31,11 @@ using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.ConfigurationPage.PrintLeveling;
+using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.VectorMath;
 using System;
+using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl
 {
@@ -41,11 +43,12 @@ namespace MatterHackers.MatterControl
 	{
 		protected TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 
-		private Vector3[] positions = new Vector3[3];
+		private List<Vector3> positions = new List<Vector3>();
 
 		public EditLevelingSettingsWindow()
-			: base(400, 200)
+			: base(400, 370)
 		{
+			AlwaysOnTopOfMain = true;
 			Title = LocalizedString.Get("Leveling Settings".Localize());
 
 			FlowLayoutWidget topToBottom = new FlowLayoutWidget(FlowDirection.TopToBottom);
@@ -83,16 +86,26 @@ namespace MatterHackers.MatterControl
 			BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
 			double oldHeight = textImageButtonFactory.FixedHeight;
-			textImageButtonFactory.FixedHeight = 30 * TextWidget.GlobalPointSizeScaleRatio;
+			textImageButtonFactory.FixedHeight = 30 * GuiWidget.DeviceScale;
 
 			// put in the movement edit controls
-			PrintLevelingData levelingData = PrintLevelingData.GetForPrinter(ActivePrinterProfile.Instance.ActivePrinter);
-			positions[0] = levelingData.sampledPosition0;
-			positions[1] = levelingData.sampledPosition1;
-			positions[2] = levelingData.sampledPosition2;
+			PrintLevelingData levelingData = ActiveSliceSettings.Instance.Helpers.GetPrintLevelingData();
+			if (EditSamplePositionList(levelingData))
+			{
+				for (int i = 0; i < levelingData.SampledPositions.Count; i++)
+				{
+					positions.Add(levelingData.SampledPositions[i]);
+				}
+			}
+			else
+			{
+				positions.Add(levelingData.SampledPosition0);
+				positions.Add(levelingData.SampledPosition1);
+				positions.Add(levelingData.SampledPosition2);
+			}
 
 			int tab_index = 0;
-			for (int row = 0; row < 3; row++)
+			for (int row = 0; row < positions.Count; row++)
 			{
 				FlowLayoutWidget leftRightEdit = new FlowLayoutWidget();
 				leftRightEdit.Padding = new BorderDouble(3);
@@ -107,10 +120,7 @@ namespace MatterHackers.MatterControl
 
 				for (int axis = 0; axis < 3; axis++)
 				{
-					GuiWidget hSpacer = new GuiWidget();
-					hSpacer.HAnchor = HAnchor.ParentLeftRight;
-
-					leftRightEdit.AddChild(hSpacer);
+					leftRightEdit.AddChild(new HorizontalSpacer());
 
 					string axisName = "x";
 					if (axis == 1) axisName = "y";
@@ -123,14 +133,16 @@ namespace MatterHackers.MatterControl
 					int linkCompatibleRow = row;
 					int linkCompatibleAxis = axis;
 					double minValue = double.MinValue;
-					if (axis == 2 && ActiveSliceSettings.Instance.GetActiveValue("z_can_be_negative") == "0")
+					if (axis == 2 && ActiveSliceSettings.Instance.GetValue("z_can_be_negative") == "0")
 					{
 						minValue = 0;
 					}
 					MHNumberEdit valueEdit = new MHNumberEdit(positions[linkCompatibleRow][linkCompatibleAxis], allowNegatives: true, allowDecimals: true, minValue: minValue, pixelWidth: 60, tabIndex: tab_index++);
 					valueEdit.ActuallNumberEdit.InternalTextEditWidget.EditComplete += (sender, e) =>
 					{
-						positions[linkCompatibleRow][linkCompatibleAxis] = valueEdit.ActuallNumberEdit.Value;
+						Vector3 position = positions[linkCompatibleRow];
+						position[linkCompatibleAxis] = valueEdit.ActuallNumberEdit.Value;
+						positions[linkCompatibleRow] = position;
 					};
 
 					valueEdit.Margin = new BorderDouble(3);
@@ -153,10 +165,7 @@ namespace MatterHackers.MatterControl
 			Button cancelPresetsButton = textImageButtonFactory.Generate("Cancel".Localize());
 			cancelPresetsButton.Click += (sender, e) =>
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					Close();
-				});
+				UiThread.RunOnIdle(Close);
 			};
 
 			FlowLayoutWidget buttonRow = new FlowLayoutWidget();
@@ -180,19 +189,36 @@ namespace MatterHackers.MatterControl
 			UiThread.RunOnIdle(DoSave_Click);
 		}
 
-		private void DoSave_Click(object state)
+		bool EditSamplePositionList(PrintLevelingData levelingData)
 		{
-			PrintLevelingData levelingData = PrintLevelingData.GetForPrinter(ActivePrinterProfile.Instance.ActivePrinter);
+			if (levelingData.CurrentPrinterLevelingSystem == PrintLevelingData.LevelingSystem.Probe7PointRadial
+				|| levelingData.CurrentPrinterLevelingSystem == PrintLevelingData.LevelingSystem.Probe13PointRadial)
+			{
+				return true;
+			}
 
-			levelingData.sampledPosition0 = positions[0];
-			levelingData.sampledPosition1 = positions[1];
-			levelingData.sampledPosition2 = positions[2];
+			return false;
+		}
 
-			PrintLevelingPlane.Instance.SetPrintLevelingEquation(
-				levelingData.sampledPosition0,
-				levelingData.sampledPosition1,
-				levelingData.sampledPosition2,
-				ActiveSliceSettings.Instance.PrintCenter);
+		private void DoSave_Click()
+		{
+			PrintLevelingData levelingData = ActiveSliceSettings.Instance.Helpers.GetPrintLevelingData();
+
+			if (EditSamplePositionList(levelingData))
+			{
+				for (int i = 0; i < levelingData.SampledPositions.Count; i++)
+				{
+					levelingData.SampledPositions[i] = positions[i];
+				}
+			}
+			else
+			{
+				levelingData.SampledPosition0 = positions[0];
+				levelingData.SampledPosition1 = positions[1];
+				levelingData.SampledPosition2 = positions[2];
+			}
+
+			ActiveSliceSettings.Instance.Helpers.SetPrintLevelingData(levelingData);
 
 			Close();
 		}

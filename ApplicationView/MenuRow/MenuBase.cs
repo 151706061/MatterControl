@@ -1,16 +1,29 @@
 ﻿using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
-using MatterHackers.Localizations;
-using MatterHackers.MatterControl.ContactForm;
 using MatterHackers.VectorMath;
 using System;
+using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl
 {
+	public class MenuItemAction
+	{
+		public MenuItemAction(string title, Action action)
+		{
+			this.Title = title;
+			this.Action = action;
+		}
+
+		public string Title { get; set; }
+		public Action Action { get; set; }
+	}
+
 	public abstract class MenuBase : GuiWidget
 	{
 		public DropDownMenu MenuDropList;
-		private TupleList<string, Func<bool>> menuItems = null;
+		private List<MenuItemAction> menuActions = null;
+
+		protected abstract IEnumerable<MenuItemAction> GetMenuActions();
 
 		public MenuBase(string menuName)
 		{
@@ -18,46 +31,51 @@ namespace MatterHackers.MatterControl
 			MenuDropList.MenuItemsPadding = new BorderDouble(0);
 			MenuDropList.Margin = new BorderDouble(0);
 			MenuDropList.Padding = new BorderDouble(0);
+			MenuDropList.MenuItemsPadding = new BorderDouble(8, 4);// 8, 6, 8, 6);
 
 			MenuDropList.DrawDirectionalArrow = false;
 			MenuDropList.MenuAsWideAsItems = false;
 
-			menuItems = GetMenuItems();
+			menuActions = new List<MenuItemAction>(GetMenuActions());
 			BorderDouble padding = MenuDropList.MenuItemsPadding;
 			//Add the menu items to the menu itself
-			foreach (Tuple<string, Func<bool>> item in menuItems)
+			foreach (MenuItemAction item in menuActions)
 			{
-				MenuDropList.MenuItemsPadding = new BorderDouble(8, 4, 8, 4) * TextWidget.GlobalPointSizeScaleRatio;
-				MenuDropList.AddItem(item.Item1, pointSize: 10);
+				if (item.Title.StartsWith("-----"))
+				{
+					MenuDropList.AddHorizontalLine();
+				}
+				else
+				{
+					MenuItem newItem = MenuDropList.AddItem(item.Title, pointSize: 11);
+					if (item.Action == null)
+					{
+						newItem.Enabled = false;
+					}
+				}
 			}
 			MenuDropList.Padding = padding;
 
-
 			AddChild(MenuDropList);
 			this.Width = GetChildrenBoundsIncludingMargins().Width;
-			this.Height = 22 * TextWidget.GlobalPointSizeScaleRatio;
+			this.Height = 22 * GuiWidget.DeviceScale;
 			this.Margin = new BorderDouble(0);
 			this.Padding = new BorderDouble(0);
 			this.VAnchor = Agg.UI.VAnchor.ParentCenter;
-			this.MenuDropList.SelectionChanged += new EventHandler(MenuDropList_SelectionChanged);
+			this.MenuDropList.SelectionChanged += MenuDropList_SelectionChanged;
 			this.MenuDropList.OpenOffset = new Vector2(0, 0);
 		}
 
 		private void MenuDropList_SelectionChanged(object sender, EventArgs e)
 		{
 			string menuSelection = ((DropDownMenu)sender).SelectedValue;
-			foreach (Tuple<string, Func<bool>> item in menuItems)
+			foreach (MenuItemAction item in menuActions)
 			{
-				if (item.Item1 == menuSelection)
+				if (item.Title == menuSelection && item.Action != null)
 				{
-					if (item.Item2 != null)
-					{
-						item.Item2();
-					}
+					UiThread.RunOnIdle(item.Action);
 				}
 			}
 		}
-
-		abstract protected TupleList<string, Func<bool>> GetMenuItems();
 	}
 }

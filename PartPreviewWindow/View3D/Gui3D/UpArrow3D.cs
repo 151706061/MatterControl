@@ -43,15 +43,22 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 {
 	public class UpArrow3D : InteractionVolume
 	{
-		private Mesh upArrow;
-		private double zHitHeight;
-		private Vector3 lastMoveDelta;
+		internal HeightValueDisplay heightDisplay;
 		private PlaneShape hitPlane;
+		private Vector3 lastMoveDelta;
+		private Matrix4X4 transformOnMouseDown = Matrix4X4.Identity;
+		private Mesh upArrow;
 		private View3DWidget view3DWidget;
+		private double zHitHeight;
 
 		public UpArrow3D(View3DWidget view3DWidget)
 			: base(null, view3DWidget.meshViewerWidget)
 		{
+			heightDisplay = new HeightValueDisplay(view3DWidget);
+			heightDisplay.Visible = false;
+
+			DrawOnTop = true;
+
 			this.view3DWidget = view3DWidget;
 			string arrowFile = Path.Combine("Icons", "3D Icons", "up_pointer.stl");
 			if (StaticData.Instance.FileExists(arrowFile))
@@ -65,12 +72,35 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 						upArrow = loadedMeshGroups[0].Meshes[0];
 
 						CollisionVolume = PlatingHelper.CreateTraceDataForMesh(upArrow);
-						AxisAlignedBoundingBox arrowBounds = upArrow.GetAxisAlignedBoundingBox();
 						//CollisionVolume = new CylinderShape(arrowBounds.XSize / 2, arrowBounds.ZSize, new SolidMaterial(RGBA_Floats.Red, .5, 0, .4));
 						//CollisionVolume = new CylinderShape(arrowBounds.XSize / 2 * 4, arrowBounds.ZSize * 4, new SolidMaterial(RGBA_Floats.Red, .5, 0, .4));
 					}
 				}
 			}
+		}
+
+		public override void DrawGlContent(EventArgs e)
+		{
+			bool shouldDrawScaleControls = true;
+			if (MeshViewerToDrawWith.SelectedInteractionVolume != null
+				&& MeshViewerToDrawWith.SelectedInteractionVolume as UpArrow3D == null)
+			{
+				shouldDrawScaleControls = false;
+			}
+			if (MeshViewerToDrawWith.SelectedMeshGroup != null
+				&& shouldDrawScaleControls)
+			{
+				if (MouseOver)
+				{
+					RenderMeshToGl.Render(upArrow, RGBA_Bytes.Red, TotalTransform, RenderTypes.Shaded);
+				}
+				else
+				{
+					RenderMeshToGl.Render(upArrow, RGBA_Bytes.Black, TotalTransform, RenderTypes.Shaded);
+				}
+			}
+
+			base.DrawGlContent(e);
 		}
 
 		public override void OnMouseDown(MouseEvent3DArgs mouseEvent3D)
@@ -82,6 +112,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			IntersectInfo info = hitPlane.GetClosestIntersection(mouseEvent3D.MouseRay);
 			zHitHeight = info.hitPosition.z;
+			transformOnMouseDown = MeshViewerToDrawWith.SelectedMeshGroupTransform;
 
 			base.OnMouseDown(mouseEvent3D);
 		}
@@ -95,23 +126,22 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				Vector3 delta = new Vector3(0, 0, info.hitPosition.z - zHitHeight);
 
 				// move it back to where it started
-				ScaleRotateTranslate translated = MeshViewerToDrawWith.SelectedMeshGroupTransform;
-				translated.translation *= Matrix4X4.CreateTranslation(new Vector3(-lastMoveDelta)); ;
-				MeshViewerToDrawWith.SelectedMeshGroupTransform = translated;
+				MeshViewerToDrawWith.SelectedMeshGroupTransform *= Matrix4X4.CreateTranslation(new Vector3(-lastMoveDelta));
 
-				// now snap this position to the grid
+				if (MeshViewerToDrawWith.SnapGridDistance > 0)
 				{
+					// snap this position to the grid
 					double snapGridDistance = MeshViewerToDrawWith.SnapGridDistance;
 					AxisAlignedBoundingBox selectedBounds = MeshViewerToDrawWith.GetBoundsForSelection();
-					double bottom = selectedBounds.minXYZ.z + delta.z;
 
-					double snappedBottom = ((int)((bottom / snapGridDistance) + .5)) * snapGridDistance;
+					// snap the z position
+					double bottom = selectedBounds.minXYZ.z + delta.z;
+					double snappedBottom = (Math.Round((bottom / snapGridDistance))) * snapGridDistance;
 					delta.z = snappedBottom - selectedBounds.minXYZ.z;
 				}
 
 				// and move it from there to where we are now
-				translated.translation *= Matrix4X4.CreateTranslation(new Vector3(delta));
-				MeshViewerToDrawWith.SelectedMeshGroupTransform = translated;
+				MeshViewerToDrawWith.SelectedMeshGroupTransform *= Matrix4X4.CreateTranslation(new Vector3(delta));
 
 				lastMoveDelta = delta;
 
@@ -122,7 +152,13 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			base.OnMouseMove(mouseEvent3D);
 		}
 
-		public void SetPosition()
+		public override void OnMouseUp(MouseEvent3DArgs mouseEvent3D)
+		{
+			view3DWidget.AddUndoForSelectedMeshGroupTransform(transformOnMouseDown);
+			base.OnMouseUp(mouseEvent3D);
+		}
+
+		public override void SetPosition()
 		{
 			AxisAlignedBoundingBox selectedBounds = MeshViewerToDrawWith.GetBoundsForSelection();
 			Vector3 boundsCenter = selectedBounds.Center;
@@ -139,35 +175,12 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			if (MouseOver || MouseDownOnControl)
 			{
-				view3DWidget.heightDisplay.Visible = true;
+				heightDisplay.Visible = true;
 			}
 			else if (!view3DWidget.DisplayAllValueData)
 			{
-				view3DWidget.heightDisplay.Visible = false;
+				heightDisplay.Visible = false;
 			}
-		}
-
-		public override void DrawGlContent(EventArgs e)
-		{
-			if (MeshViewerToDrawWith.SelectedMeshGroup != null)
-			{
-				if (MouseOver)
-				{
-					RenderMeshToGl.Render(upArrow, RGBA_Bytes.Red, TotalTransform, RenderTypes.Shaded);
-
-					// draw the hight from the bottom to the bed
-					AxisAlignedBoundingBox selectedBounds = MeshViewerToDrawWith.GetBoundsForSelection();
-
-					Vector3 bottomRight = new Vector3(selectedBounds.maxXYZ.x, selectedBounds.maxXYZ.y, selectedBounds.minXYZ.z);
-					Vector2 bottomRightScreenPosition = MeshViewerToDrawWith.TrackballTumbleWidget.GetScreenPosition(bottomRight);
-				}
-				else
-				{
-					RenderMeshToGl.Render(upArrow, RGBA_Bytes.Black, TotalTransform, RenderTypes.Shaded);
-				}
-			}
-
-			base.DrawGlContent(e);
 		}
 	}
 }

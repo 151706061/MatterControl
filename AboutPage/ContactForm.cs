@@ -68,7 +68,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			SetButtonAttributes();
 			AnchorAll();
 
-			cancelButton = textImageButtonFactory.Generate(LocalizedString.Get("Cancel"));
+			cancelButton = textImageButtonFactory.Generate("Cancel".Localize());
 			submitButton = textImageButtonFactory.Generate(LocalizedString.Get("Submit"));
 			doneButton = textImageButtonFactory.Generate(LocalizedString.Get("Done"));
 			doneButton.Visible = false;
@@ -81,7 +81,7 @@ namespace MatterHackers.MatterControl.ContactForm
 		{
 			GuiWidget labelContainer = new GuiWidget();
 			labelContainer.HAnchor = HAnchor.ParentLeftRight;
-			labelContainer.Height = height * TextWidget.GlobalPointSizeScaleRatio;
+			labelContainer.Height = height * GuiWidget.DeviceScale;
 
 			TextWidget formLabel = new TextWidget(labelText, pointSize: fontSize);
 			formLabel.TextColor = ActiveTheme.Instance.PrimaryTextColor;
@@ -115,7 +115,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			labelContainer.HAnchor = HAnchor.ParentLeftRight;
 			labelContainer.Height = 30;
 
-			TextWidget formLabel = new TextWidget(LocalizedString.Get("How can we help?"), pointSize: 16);
+			TextWidget formLabel = new TextWidget(LocalizedString.Get("How can we improve?"), pointSize: 16);
 			formLabel.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 			formLabel.VAnchor = VAnchor.ParentTop;
 			formLabel.HAnchor = HAnchor.ParentLeft;
@@ -146,8 +146,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			formContainer.BackgroundColor = ActiveTheme.Instance.SecondaryBackgroundColor;
 			formContainer.Padding = new BorderDouble(10);
 
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Question*")));
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Briefly describe your question"), 9, 14));
+			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Subject*")));
 
 			questionInput = new MHTextEditWidget(subjectText);
 			questionInput.HAnchor = HAnchor.ParentLeftRight;
@@ -156,8 +155,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			questionErrorMessage = ErrorMessageGenerator();
 			formContainer.AddChild(questionErrorMessage);
 
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Details*")));
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Fill in the details here"), 9, 14));
+			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Message*")));
 
 			detailInput = new MHTextEditWidget(bodyText, pixelHeight: 120, multiLine: true);
 			detailInput.HAnchor = HAnchor.ParentLeftRight;
@@ -166,7 +164,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			detailErrorMessage = ErrorMessageGenerator();
 			formContainer.AddChild(detailErrorMessage);
 
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Your Email Address*")));
+			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Email Address*")));
 
 			emailInput = new MHTextEditWidget();
 			emailInput.HAnchor = HAnchor.ParentLeftRight;
@@ -175,7 +173,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			emailErrorMessage = ErrorMessageGenerator();
 			formContainer.AddChild(emailErrorMessage);
 
-			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Your Name*")));
+			formContainer.AddChild(LabelGenerator(LocalizedString.Get("Name*")));
 
 			nameInput = new MHTextEditWidget();
 			nameInput.HAnchor = HAnchor.ParentLeftRight;
@@ -228,17 +226,11 @@ namespace MatterHackers.MatterControl.ContactForm
 		{
 			cancelButton.Click += (sender, e) =>
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					Close();
-				});
+				UiThread.RunOnIdle(Close);
 			};
 			doneButton.Click += (sender, e) =>
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					Close();
-				});
+				UiThread.RunOnIdle(Close);
 			};
 			submitButton.Click += new EventHandler(SubmitContactForm);
 		}
@@ -259,7 +251,7 @@ namespace MatterHackers.MatterControl.ContactForm
 				submitButton.Visible = false;
 
 				postRequest.RequestSucceeded += new EventHandler(onPostRequestSucceeded);
-				postRequest.RequestFailed += new EventHandler(onPostRequestFailed);
+				postRequest.RequestFailed += onPostRequestFailed;
 				postRequest.Request();
 			}
 		}
@@ -270,7 +262,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			doneButton.Visible = true;
 		}
 
-		private void onPostRequestFailed(object sender, EventArgs e)
+		private void onPostRequestFailed(object sender, ResponseErrorEventArgs e)
 		{
 			submissionStatus.Text = LocalizedString.Get("Sorry!  We weren't able to submit your request.");
 			doneButton.Visible = true;
@@ -292,7 +284,7 @@ namespace MatterHackers.MatterControl.ContactForm
 			textImageButtonFactory.disabledTextColor = ActiveTheme.Instance.PrimaryTextColor;
 			textImageButtonFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
 
-			whiteButtonFactory.FixedWidth = 138 * TextWidget.GlobalPointSizeScaleRatio;
+			whiteButtonFactory.FixedWidth = 138 * GuiWidget.DeviceScale;
 			whiteButtonFactory.normalFillColor = RGBA_Bytes.White;
 			whiteButtonFactory.normalTextColor = RGBA_Bytes.Black;
 			whiteButtonFactory.hoverTextColor = RGBA_Bytes.Black;
@@ -328,14 +320,14 @@ namespace MatterHackers.MatterControl.ContactForm
 			: base(500, 550)
 		{
 			AlwaysOnTopOfMain = true;
-			Title = LocalizedString.Get("MatterControl: Submit an Issue");
+			Title = LocalizedString.Get("MatterControl: Submit Feedback");
 
 			BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
 			contactFormWidget = new ContactFormWidget(subject, bodyText);
 
 #if __ANDROID__
-			this.AddChild(new SoftKeyboardContentOffset(contactFormWidget, SoftKeyboardContentOffset.AndroidKeyboardOffset));
+			this.AddChild(new SoftKeyboardContentOffset(contactFormWidget));
 #else
 			AddChild(contactFormWidget);
 #endif
@@ -349,16 +341,13 @@ namespace MatterHackers.MatterControl.ContactForm
 
 		private void AddHandlers()
 		{
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
+			ActiveTheme.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
 			contactFormWidget.Closed += (sender, e) => { Close(); };
 		}
 
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
 		}
 

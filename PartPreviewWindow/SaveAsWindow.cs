@@ -2,28 +2,37 @@
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.CustomWidgets;
+using MatterHackers.MatterControl.CustomWidgets.LibrarySelector;
 using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.MatterControl.PrintLibrary;
+using MatterHackers.MatterControl.PrintLibrary.Provider;
 using MatterHackers.MatterControl.PrintQueue;
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace MatterHackers.MatterControl
 {
 	public class SaveAsWindow : SystemWindow
 	{
+		private Action<SaveAsReturnInfo> functionToCallOnSaveAs;
 		private TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 		private MHTextEditWidget textToAddWidget;
-		private CheckBox addToLibraryOption;
+		LibrarySelectorWidget librarySelectorWidget;
+		Button saveAsButton;
 
-		public delegate void SetPrintItemWrapperAndSave(SaveAsReturnInfo returnInfo);
-
-		private SetPrintItemWrapperAndSave functionToCallOnSaveAs;
-
-		public SaveAsWindow(SetPrintItemWrapperAndSave functionToCallOnSaveAs)
-			: base(480, 250)
+        public SaveAsWindow(Action<SaveAsReturnInfo> functionToCallOnSaveAs, List<ProviderLocatorNode> providerLocator, bool showQueue, bool getNewName)
+			: base(480, 500)
 		{
-			Title = "MatterControl - Save As";
+			textImageButtonFactory.normalTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			textImageButtonFactory.hoverTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			textImageButtonFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
+			textImageButtonFactory.disabledTextColor = ActiveTheme.Instance.TabLabelUnselected;
+			textImageButtonFactory.disabledFillColor = new RGBA_Bytes();
+
+			Title = "MatterControl - " + "Save As".Localize();
+			AlwaysOnTopOfMain = true;
+			this.Name = "Save As Window";
 
 			this.functionToCallOnSaveAs = functionToCallOnSaveAs;
 
@@ -40,7 +49,7 @@ namespace MatterHackers.MatterControl
 
 			//Creates Text and adds into header
 			{
-				string saveAsLabel = "Save New Design to Queue:";
+				string saveAsLabel = "Save New Design".Localize() + ":";
 				TextWidget elementHeader = new TextWidget(saveAsLabel, pointSize: 14);
 				elementHeader.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 				elementHeader.HAnchor = HAnchor.ParentLeftRight;
@@ -48,7 +57,6 @@ namespace MatterHackers.MatterControl
 
 				headerRow.AddChild(elementHeader);
 				topToBottom.AddChild(headerRow);
-				this.AddChild(topToBottom);
 			}
 
 			//Creates container in the middle of window
@@ -60,32 +68,48 @@ namespace MatterHackers.MatterControl
 				middleRowContainer.BackgroundColor = ActiveTheme.Instance.SecondaryBackgroundColor;
 			}
 
-			string fileNameLabel = "Design Name";
-			TextWidget textBoxHeader = new TextWidget(fileNameLabel, pointSize: 12);
-			textBoxHeader.TextColor = ActiveTheme.Instance.PrimaryTextColor;
-			textBoxHeader.Margin = new BorderDouble(5);
-			textBoxHeader.HAnchor = HAnchor.ParentLeft;
+			librarySelectorWidget = new LibrarySelectorWidget(showQueue);
 
-			string fileNameLabelFull = "Enter the name of your design.";
-			TextWidget textBoxHeaderFull = new TextWidget(fileNameLabelFull, pointSize: 9);
-			textBoxHeaderFull.TextColor = ActiveTheme.Instance.PrimaryTextColor;
-			textBoxHeaderFull.Margin = new BorderDouble(5);
-			textBoxHeaderFull.HAnchor = HAnchor.ParentLeftRight;
+			// put in the bread crumb widget
+			FolderBreadCrumbWidget breadCrumbWidget = new FolderBreadCrumbWidget(librarySelectorWidget.SetCurrentLibraryProvider, librarySelectorWidget.CurrentLibraryProvider);
+			middleRowContainer.AddChild(breadCrumbWidget);
 
-			//Adds text box and check box to the above container
-			textToAddWidget = new MHTextEditWidget("", pixelWidth: 300, messageWhenEmptyAndNotSelected: "Enter a Design Name Here");
-			textToAddWidget.HAnchor = HAnchor.ParentLeftRight;
-			textToAddWidget.Margin = new BorderDouble(5);
+			librarySelectorWidget.ChangedCurrentLibraryProvider += breadCrumbWidget.SetBreadCrumbs;
 
-			addToLibraryOption = new CheckBox("Also save to Library", ActiveTheme.Instance.PrimaryTextColor);
-			addToLibraryOption.Margin = new BorderDouble(5);
-			addToLibraryOption.HAnchor = HAnchor.ParentLeftRight;
+			// put in the area to pick the provider to save to
+			{
+				//Adds text box and check box to the above container
+				GuiWidget chooseWindow = new GuiWidget(10, 30);
+				chooseWindow.HAnchor = HAnchor.ParentLeftRight;
+				chooseWindow.VAnchor = VAnchor.ParentBottomTop;
+				chooseWindow.Margin = new BorderDouble(5);
+				chooseWindow.BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
+				chooseWindow.Padding = new BorderDouble(3);
+				chooseWindow.AddChild(librarySelectorWidget);
 
-			middleRowContainer.AddChild(textBoxHeader);
-			middleRowContainer.AddChild(textBoxHeaderFull);
-			middleRowContainer.AddChild(textToAddWidget);
+				middleRowContainer.AddChild(chooseWindow);
+			}
+
+			// put in the area to type in the new name
+			if(getNewName)
+			{
+				string fileNameLabel = "Design Name".Localize();
+				TextWidget fileNameHeader = new TextWidget(fileNameLabel, pointSize: 12);
+				fileNameHeader.TextColor = ActiveTheme.Instance.PrimaryTextColor;
+				fileNameHeader.Margin = new BorderDouble(5);
+				fileNameHeader.HAnchor = HAnchor.ParentLeft;
+
+				//Adds text box and check box to the above container
+				textToAddWidget = new MHTextEditWidget("", pixelWidth: 300, messageWhenEmptyAndNotSelected: "Enter a Design Name Here".Localize());
+				textToAddWidget.HAnchor = HAnchor.ParentLeftRight;
+				textToAddWidget.Margin = new BorderDouble(5);
+				textToAddWidget.ActualTextEditWidget.EnterPressed += new KeyEventHandler(ActualTextEditWidget_EnterPressed);
+
+				middleRowContainer.AddChild(fileNameHeader);
+				middleRowContainer.AddChild(textToAddWidget);
+			}
+
 			middleRowContainer.AddChild(new HorizontalSpacer());
-			middleRowContainer.AddChild(addToLibraryOption);
 			topToBottom.AddChild(middleRowContainer);
 
 			//Creates button container on the bottom of window
@@ -96,18 +120,21 @@ namespace MatterHackers.MatterControl
 				buttonRow.Padding = new BorderDouble(0, 3);
 			}
 
-			Button saveAsButton = textImageButtonFactory.Generate("Save As".Localize(), centerText: true);
-			saveAsButton.Visible = true;
+			saveAsButton = textImageButtonFactory.Generate("Save".Localize(), centerText: true);
+			saveAsButton.Name = "Save As Save Button";
+			// Disable the save as button until the user actually selects a provider
+			saveAsButton.Enabled = false;
 			saveAsButton.Cursor = Cursors.Hand;
 			buttonRow.AddChild(saveAsButton);
 
+			librarySelectorWidget.ChangedCurrentLibraryProvider += EnableSaveAsButtonOnChangedLibraryProvider;
+
 			saveAsButton.Click += new EventHandler(saveAsButton_Click);
-			textToAddWidget.ActualTextEditWidget.EnterPressed += new KeyEventHandler(ActualTextEditWidget_EnterPressed);
 
 			//Adds SaveAs and Close Button to button container
 			buttonRow.AddChild(new HorizontalSpacer());
 
-			Button cancelButton = textImageButtonFactory.Generate("Cancel", centerText: true);
+			Button cancelButton = textImageButtonFactory.Generate("Cancel".Localize(), centerText: true);
 			cancelButton.Visible = true;
 			cancelButton.Cursor = Cursors.Hand;
 			buttonRow.AddChild(cancelButton);
@@ -118,7 +145,29 @@ namespace MatterHackers.MatterControl
 
 			topToBottom.AddChild(buttonRow);
 
+#if __ANDROID__
+			this.AddChild(new SoftKeyboardContentOffset(topToBottom));
+#else
+			this.AddChild(topToBottom);
+#endif
+
 			ShowAsSystemWindow();
+		}
+
+		private void EnableSaveAsButtonOnChangedLibraryProvider(LibraryProvider arg1, LibraryProvider arg2)
+		{
+			// Once we have navigated to any provider enable the ability to click the save as button.
+			saveAsButton.Enabled = true;
+		}
+
+		public override void OnLoad(EventArgs args)
+		{
+			if (textToAddWidget != null
+				&& !UserSettings.Instance.IsTouchScreen)
+			{
+				UiThread.RunOnIdle(textToAddWidget.Focus);
+			}
+			base.OnLoad(args);
 		}
 
 		private void ActualTextEditWidget_EnterPressed(object sender, KeyEventArgs keyEvent)
@@ -131,40 +180,36 @@ namespace MatterHackers.MatterControl
 			SubmitForm();
 		}
 
-		public class SaveAsReturnInfo
-		{
-			public string fileNameAndPath;
-			public bool placeInLibrary;
-			public string newName;
-			public PrintItemWrapper printItemWrapper;
-
-			public SaveAsReturnInfo(string newName, string fileNameAndPath, bool placeInLibrary)
-			{
-				this.newName = newName;
-				this.fileNameAndPath = fileNameAndPath;
-				this.placeInLibrary = placeInLibrary;
-
-				PrintItem printItem = new PrintItem();
-				printItem.Name = newName;
-				printItem.FileLocation = Path.GetFullPath(fileNameAndPath);
-				printItem.PrintItemCollectionID = LibraryData.Instance.LibraryCollection.Id;
-				printItem.Commit();
-
-				printItemWrapper = new PrintItemWrapper(printItem);
-			}
-		}
-
 		private void SubmitForm()
 		{
-			string newName = textToAddWidget.ActualTextEditWidget.Text;
+			string newName = "none";
+			if (textToAddWidget != null)
+			{
+				newName = textToAddWidget.ActualTextEditWidget.Text;
+			}
+
 			if (newName != "")
 			{
 				string fileName = Path.ChangeExtension(Path.GetRandomFileName(), ".amf");
 				string fileNameAndPath = Path.Combine(ApplicationDataStorage.Instance.ApplicationLibraryDataPath, fileName);
 
-				SaveAsReturnInfo returnInfo = new SaveAsReturnInfo(newName, fileNameAndPath, addToLibraryOption.Checked);
+				SaveAsReturnInfo returnInfo = new SaveAsReturnInfo(newName, fileNameAndPath, librarySelectorWidget.CurrentLibraryProvider);
 				functionToCallOnSaveAs(returnInfo);
 				CloseOnIdle();
+			}
+		}
+
+		public class SaveAsReturnInfo
+		{
+			public string fileNameAndPath;
+			public string newName;
+			public LibraryProvider destinationLibraryProvider;
+
+			public SaveAsReturnInfo(string newName, string fileNameAndPath, LibraryProvider destinationLibraryProvider)
+			{
+				this.destinationLibraryProvider = destinationLibraryProvider;
+				this.newName = newName;
+				this.fileNameAndPath = fileNameAndPath;
 			}
 		}
 	}

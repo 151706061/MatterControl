@@ -10,9 +10,9 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 		{
 		}
 
-		public override ActivePrinterProfile.SlicingEngineTypes GetSliceEngineType()
+		public override SlicingEngineTypes GetSliceEngineType()
 		{
-			return ActivePrinterProfile.SlicingEngineTypes.Slic3r;
+			return SlicingEngineTypes.Slic3r;
 		}
 
 		protected override string getWindowsPath()
@@ -33,10 +33,10 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 
 		protected override string getLinuxPath()
 		{
-			string slic3rRelativePathWindows = Path.Combine("..", "Slic3r", "slic3r.exe");
+			string slic3rRelativePathWindows = Path.Combine("..", "Slic3r", "bin","slic3r");
 			if (!File.Exists(slic3rRelativePathWindows))
 			{
-				slic3rRelativePathWindows = Path.Combine(".", "Slic3r", "slic3r.exe");
+				slic3rRelativePathWindows = Path.Combine(".", "Slic3r", "bin","slic3r");
 			}
 			return Path.GetFullPath(slic3rRelativePathWindows);
 		}

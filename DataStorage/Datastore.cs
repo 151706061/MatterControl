@@ -28,8 +28,10 @@ either expressed or implied, of the FreeBSD Project.
 */
 
 using MatterHackers.Agg.PlatformAbstract;
+using MatterHackers.Agg.UI;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 
@@ -41,9 +43,11 @@ namespace MatterHackers.MatterControl.DataStorage
 
 		//Describes the location for storing all local application data
 		private static ApplicationDataStorage globalInstance;
-		private readonly string applicationDataFolderName = "MatterControl";
+		private static readonly string applicationDataFolderName = "MatterControl";
 		private readonly string datastoreName = "MatterControl.db";
 		private string applicationPath;
+		private static string applicationUserDataPath = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), applicationDataFolderName);
+
 		public ApplicationDataStorage()
 		//Constructor - validates that local storage folder exists, creates if necessary
 		{
@@ -69,11 +73,20 @@ namespace MatterHackers.MatterControl.DataStorage
 			}
 		}
 
+		public string GetTempFileName(string fileExtension = null)
+		{
+			string tempFileName = string.IsNullOrEmpty(fileExtension) ?
+				Path.GetRandomFileName() :
+				Path.ChangeExtension(Path.GetRandomFileName(), "." + fileExtension.TrimStart('.'));
+
+			return Path.Combine(this.ApplicationTempDataPath, tempFileName);
+		}
+
 		public string ApplicationLibraryDataPath
 		{
 			get
 			{
-				string libraryPath = Path.Combine(ApplicationDataStorage.Instance.ApplicationUserDataPath, "Library");
+				string libraryPath = Path.Combine(ApplicationDataStorage.ApplicationUserDataPath, "Library");
 
 				//Create library path if it doesn't exist
 				DirectoryInfo dir = new DirectoryInfo(libraryPath);
@@ -83,6 +96,24 @@ namespace MatterHackers.MatterControl.DataStorage
 				}
 				return libraryPath;
 			}
+		}
+
+		/// <summary>
+		/// Overrides the AppData location.
+		/// </summary>
+		/// <param name="path">The new AppData path.</param>
+		internal void OverrideAppDataLocation(string path)
+		{
+			Console.WriteLine("Tests Overriding ApplicationUserDataPath to: " + path);
+
+			// Ensure the target directory exists
+			Directory.CreateDirectory(path);
+
+			applicationUserDataPath = path;
+
+			// Initialize a fresh datastore instance after overriding the AppData path
+			Datastore.Instance = new Datastore();
+			Datastore.Instance.Initialize();
 		}
 
 		public string ApplicationPath
@@ -113,13 +144,14 @@ namespace MatterHackers.MatterControl.DataStorage
 		/// Returns the application user data folder
 		/// </summary>
 		/// <returns></returns>
-		public string ApplicationUserDataPath
+		public static string ApplicationUserDataPath
 		{
 			get
 			{
-				return Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), applicationDataFolderName);
+				return applicationUserDataPath;
 			}
 		}
+
 		/// <summary>
 		/// Returns the path to the sqlite database
 		/// </summary>
@@ -166,15 +198,31 @@ namespace MatterHackers.MatterControl.DataStorage
 		}
 	}
 
-	internal class Datastore
+	public class Datastore
 	{
+		bool wasExited = false;
 		public bool ConnectionError = false;
 		public ISQLite dbSQLite;
-		private static string datastoreLocation = ApplicationDataStorage.Instance.DatastorePath;
+		private string datastoreLocation = ApplicationDataStorage.Instance.DatastorePath;
 		private static Datastore globalInstance;
 		private ApplicationSession activeSession;
-		private List<Type> dataStoreTables = new List<Type> { typeof(PrintItemCollection), typeof(PrinterSetting), typeof(CustomCommands), typeof(SystemSetting), typeof(UserSetting), typeof(ApplicationSession), typeof(PrintItem), typeof(PrintTask), typeof(Printer), typeof(SliceSetting), typeof(SliceSettingsCollection) };
 		private bool TEST_FLAG = false;
+
+		private List<Type> dataStoreTables = new List<Type>
+		{
+			typeof(PrintItemCollection),
+			typeof(PrinterSetting),
+			typeof(CustomCommands),
+			typeof(SystemSetting),
+			typeof(UserSetting),
+			typeof(ApplicationSession),
+			typeof(PrintItem),
+			typeof(PrintTask),
+			typeof(Printer),
+			typeof(SliceSetting),
+			typeof(SliceSettingsCollection)
+		};
+
 		public Datastore()
 		{
 			if (!File.Exists(datastoreLocation))
@@ -216,6 +264,7 @@ namespace MatterHackers.MatterControl.DataStorage
 					}
 					catch
 					{
+						GuiWidget.BreakInDebugger();
 					}
 				}
 			}
@@ -231,11 +280,28 @@ namespace MatterHackers.MatterControl.DataStorage
 				}
 				return globalInstance;
 			}
+
+			// Special case to allow tests to set custom application paths 
+			internal set
+			{
+				globalInstance = value;
+			}
 		}
 		public void Exit()
 		{
-			this.activeSession.SessionEnd = DateTime.Now;
-			this.activeSession.Commit();
+			if (wasExited)
+			{
+				return;
+			}
+
+			wasExited = true;
+
+			if (this.activeSession != null)
+			{
+				this.activeSession.SessionEnd = DateTime.Now;
+				this.activeSession.Commit();
+			}
+
 			// lets wait a bit to make sure the commit has resolved.
 			Thread.Sleep(100);
 			try
@@ -244,7 +310,8 @@ namespace MatterHackers.MatterControl.DataStorage
 			}
 			catch (Exception)
 			{
-				// we faild to close so lets wait a bit and try again
+				GuiWidget.BreakInDebugger();
+				// we failed to close so lets wait a bit and try again
 				Thread.Sleep(1000);
 				try
 				{
@@ -252,17 +319,18 @@ namespace MatterHackers.MatterControl.DataStorage
 				}
 				catch (Exception)
 				{
+					GuiWidget.BreakInDebugger();
 				}
 			}
 		}
 
-		public void Initialize()
 		//Run initial checks and operations on sqlite datastore
+		public void Initialize()
 		{
 			if (TEST_FLAG)
 			{
 				ValidateSchema();
-				GenerateSampleData sampleData = new GenerateSampleData();
+				GenerateSampleData();
 			}
 			else
 			{
@@ -275,33 +343,41 @@ namespace MatterHackers.MatterControl.DataStorage
 		{
 			string query = string.Format("SELECT COUNT(*) FROM {0};", tableName);
 			string result = Datastore.Instance.dbSQLite.ExecuteScalar<string>(query);
+
 			return Convert.ToInt32(result);
 		}
-		private void StartSession()
+
 		//Begins new application session record
+		private void StartSession()
 		{
 			activeSession = new ApplicationSession();
 			dbSQLite.Insert(activeSession);
 		}
 
-		private void ValidateSchema()
+		private void GenerateSampleData()
+		{
+			for (int index = 1; index <= 5; index++)
+			{
+				Printer printer = new Printer();
+				printer.ComPort = string.Format("COM{0}", index);
+				printer.BaudRate = "250000";
+				printer.Name = string.Format("Printer {0}", index);
+				Datastore.Instance.dbSQLite.Insert(printer);
+			}
+		}
+
 		// Checks if the datastore contains the appropriate tables - adds them if necessary
+		private void ValidateSchema()
 		{
 			foreach (Type table in dataStoreTables)
 			{
 				dbSQLite.CreateTable(table);
-
-				//string query = string.Format("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{0}';", table.Name);
-				////SQLiteCommand command = dbSQLite.CreateCommand(query);
-
-				//int RowCount = 0;
-				//string result = dbSQLite.ExecuteScalar<string>(query);
-				//RowCount = Convert.ToInt32(result);
-				//if (RowCount == 0)
-				//{
-				//    dbSQLite.CreateTable(table);
-				//}
 			}
+		}
+
+		public bool WasExited()
+		{
+			return Instance.wasExited;
 		}
 	}
 }

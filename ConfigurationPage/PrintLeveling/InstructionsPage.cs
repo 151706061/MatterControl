@@ -30,20 +30,24 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.Font;
 using MatterHackers.Agg.UI;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.VectorMath;
 
 namespace MatterHackers.MatterControl
 {
-	public class InstructionsPage : WizardPage
+	public class InstructionsPage : WizardControlPage
 	{
-		// a sheet of paper is .1 mm, we need to subtract that.
-		protected static Vector3 paperWidth = new Vector3(0, 0, .1);
-
+		double extraTextScaling = 1;
 		protected FlowLayoutWidget topToBottomControls;
 
 		public InstructionsPage(string pageDescription, string instructionsText)
 			: base(pageDescription)
 		{
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				extraTextScaling = 1.33333;
+			}
+
 			topToBottomControls = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			topToBottomControls.Padding = new BorderDouble(3);
 			topToBottomControls.HAnchor |= Agg.UI.HAnchor.ParentLeft;
@@ -56,20 +60,6 @@ namespace MatterHackers.MatterControl
 			AnchorAll();
 		}
 
-		public static Vector3 ManualControlsFeedRate()
-		{
-			Vector3 feedRate = new Vector3(3000, 3000, 315);
-			string savedSettings = ActivePrinterProfile.Instance.ActivePrinter.ManualMovementSpeeds;
-			if (savedSettings != null && savedSettings != "")
-			{
-				feedRate.x = double.Parse(savedSettings.Split(',')[1]);
-				feedRate.y = double.Parse(savedSettings.Split(',')[3]);
-				feedRate.z = double.Parse(savedSettings.Split(',')[5]);
-			}
-
-			return feedRate;
-		}
-
 		public void AddTextField(string instructionsText, int pixelsFromLast)
 		{
 			GuiWidget spacer = new GuiWidget(10, pixelsFromLast);
@@ -78,7 +68,7 @@ namespace MatterHackers.MatterControl
 			EnglishTextWrapping wrapper = new EnglishTextWrapping(12);
 			string wrappedInstructions = wrapper.InsertCRs(instructionsText, 400);
 			string wrappedInstructionsTabsToSpaces = wrappedInstructions.Replace("\t", "    ");
-			TextWidget instructionsWidget = new TextWidget(wrappedInstructionsTabsToSpaces, textColor: ActiveTheme.Instance.PrimaryTextColor);
+			TextWidget instructionsWidget = new TextWidget(wrappedInstructionsTabsToSpaces, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 12 * extraTextScaling);
 			instructionsWidget.HAnchor = Agg.UI.HAnchor.ParentLeft;
 			topToBottomControls.AddChild(instructionsWidget);
 		}

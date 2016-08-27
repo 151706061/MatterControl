@@ -40,8 +40,6 @@ namespace MatterHackers.MatterControl.HtmlParsing
 		private static List<string> voidElements = new List<string>() { "area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr" };
 		private Stack<ElementState> elementQueue = new Stack<ElementState>();
 
-		public delegate void ProcessContent(HtmlParser htmlParser, string content);
-
 		public ElementState CurrentElementState { get { return elementQueue.Peek(); } }
 
 		public static string UrlDecode(string htmlContent)
@@ -52,7 +50,7 @@ namespace MatterHackers.MatterControl.HtmlParsing
 
 			return decoded;
 		}
-		public void ParseHtml(string htmlContent, ProcessContent addContentFunction, ProcessContent closeContentFunction)
+		public void ParseHtml(string htmlContent, Action<HtmlParser, string> addContentFunction, Action<HtmlParser, string> closeContentFunction)
 		{
 			elementQueue.Push(new ElementState());
 
@@ -86,8 +84,12 @@ namespace MatterHackers.MatterControl.HtmlParsing
 					elementQueue.Peek().typeName = htmlContent.Substring(openPosition + 1, endOfName - (openPosition + 1));
 
 					int nextOpenPosition = htmlContent.IndexOf('<', closePosition);
-					string content = htmlContent.Substring(closePosition + 1, nextOpenPosition - closePosition - 1);
-					addContentFunction(this, content);
+					if (closePosition + 1 < htmlContent.Length
+						&& nextOpenPosition != -1)
+					{
+						string content = htmlContent.Substring(closePosition + 1, nextOpenPosition - closePosition - 1);
+						addContentFunction(this, content);
+					}
 
 					if (voidElements.Contains(elementQueue.Peek().typeName))
 					{
@@ -231,7 +233,8 @@ namespace MatterHackers.MatterControl.HtmlParsing
 							break;
 
 						default:
-							throw new NotImplementedException();
+							break;
+							//throw new NotImplementedException();
 					}
 				}
 			}

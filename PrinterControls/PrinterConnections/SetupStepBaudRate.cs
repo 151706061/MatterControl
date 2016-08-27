@@ -1,14 +1,16 @@
 ﻿using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using System;
 using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 {
-	public class SetupStepBaudRate : SetupConnectionWidgetBase
+	public class SetupStepBaudRate : ConnectionWizardPage
 	{
-		private List<BaudRateRadioButton> BaudRateButtonsList = new List<BaudRateRadioButton>();
+		private List<RadioButton> BaudRateButtonsList = new List<RadioButton>();
 		private FlowLayoutWidget printerBaudRateContainer;
 		private TextWidget printerBaudRateError;
 		private GuiWidget baudRateWidget;
@@ -18,23 +20,17 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 		private Button printerBaudRateHelpLink;
 		private TextWidget printerBaudRateHelpMessage;
 
-		public SetupStepBaudRate(ConnectionWindow windowController, GuiWidget containerWindowToClose, PrinterSetupStatus setupPrinterStatus)
-			: base(windowController, containerWindowToClose, setupPrinterStatus)
+		public SetupStepBaudRate()
 		{
-			linkButtonFactory.fontSize = 8;
-
 			printerBaudRateContainer = createPrinterBaudRateContainer();
 			contentRow.AddChild(printerBaudRateContainer);
 			{
 				nextButton = textImageButtonFactory.Generate(LocalizedString.Get("Continue"));
 				nextButton.Click += new EventHandler(NextButton_Click);
 
-				GuiWidget hSpacer = new GuiWidget();
-				hSpacer.HAnchor = HAnchor.ParentLeftRight;
-
 				//Add buttons to buttonContainer
 				footerRow.AddChild(nextButton);
-				footerRow.AddChild(hSpacer);
+				footerRow.AddChild(new HorizontalSpacer());
 				footerRow.AddChild(cancelButton);
 			}
 			BindBaudRateHandlers();
@@ -51,7 +47,7 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			string baudRateLabelTextFull = string.Format("{0}:", baudRateLabelText);
 
 			TextWidget baudRateLabel = new TextWidget(baudRateLabelTextFull, 0, 0, 12);
-			baudRateLabel.TextColor = this.defaultTextColor;
+			baudRateLabel.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 			baudRateLabel.Margin = new BorderDouble(0, 0, 0, 10);
 			baudRateLabel.HAnchor = HAnchor.ParentLeftRight;
 
@@ -103,11 +99,11 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 			foreach (string baudRate in baudRates)
 			{
-				BaudRateRadioButton baudOption = new BaudRateRadioButton(baudRate);
+				RadioButton baudOption = new RadioButton(baudRate);
 				BaudRateButtonsList.Add(baudOption);
 				baudOption.Margin = baudRateMargin;
-				baudOption.TextColor = this.subContainerTextColor;
-				if (this.ActivePrinter.BaudRate == baudRate)
+				baudOption.TextColor = ActiveTheme.Instance.PrimaryTextColor;
+				if (ActiveSliceSettings.Instance.GetValue(SettingsKey.baud_rate) == baudRate)
 				{
 					baudOption.Checked = true;
 				}
@@ -116,7 +112,7 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 			otherBaudRateRadioButton = new RadioButton(LocalizedString.Get("Other"));
 			otherBaudRateRadioButton.Margin = baudRateMargin;
-			otherBaudRateRadioButton.TextColor = this.subContainerTextColor;
+			otherBaudRateRadioButton.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 
 			baudRateContainer.AddChild(otherBaudRateRadioButton);
 
@@ -126,12 +122,13 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			otherBaudRateInput.Visible = false;
 			otherBaudRateInput.HAnchor = HAnchor.ParentLeftRight;
 
-			if (this.ActivePrinter.BaudRate != null)
+			string currentBaudRate = ActiveSliceSettings.Instance.GetValue(SettingsKey.baud_rate);
+			if (currentBaudRate != null)
 			{
-				if (!baudRates.Contains(this.ActivePrinter.BaudRate.ToString()))
+				if (!baudRates.Contains(currentBaudRate))
 				{
 					otherBaudRateRadioButton.Checked = true;
-					otherBaudRateInput.Text = this.ActivePrinter.BaudRate.ToString();
+					otherBaudRateInput.Text = currentBaudRate;
 					otherBaudRateInput.Visible = true;
 				}
 			}
@@ -142,10 +139,10 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 		private void BindBaudRateHandlers()
 		{
-			otherBaudRateRadioButton.CheckedStateChanged += new RadioButton.CheckedStateChangedEventHandler(BindBaudRate_Select);
-			foreach (BaudRateRadioButton button in BaudRateButtonsList)
+			otherBaudRateRadioButton.CheckedStateChanged += BindBaudRate_Select;
+			foreach (RadioButton button in BaudRateButtonsList)
 			{
-				button.CheckedStateChanged += new RadioButton.CheckedStateChangedEventHandler(BindBaudRate_Select);
+				button.CheckedStateChanged += BindBaudRate_Select;
 			}
 			BindBaudRate_Select(null, null);
 		}
@@ -162,35 +159,9 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			}
 		}
 
-		private void RecreateCurrentWidget(object state)
+		private void MoveToNextWidget()
 		{
-			// you can call this like this
-			//             AfterUiEvents.AddAction(new AfterUIAction(RecreateCurrentWidget));
-
-			Parent.AddChild(new EditConnectionWidget((ConnectionWindow)Parent, Parent, ActivePrinter));
-			Parent.RemoveChild(this);
-		}
-
-		private void ReloadCurrentWidget(object sender, EventArgs mouseEvent)
-		{
-			UiThread.RunOnIdle(RecreateCurrentWidget);
-		}
-
-		private void MoveToNextWidget(object state)
-		{
-			// you can call this like this
-			//             AfterUiEvents.AddAction(new AfterUIAction(MoveToNextWidget));
-
-			if (this.currentPrinterSetupStatus.DriversToInstall.Count > 0)
-			{
-				Parent.AddChild(new SetupStepInstallDriver((ConnectionWindow)Parent, Parent, this.currentPrinterSetupStatus));
-				Parent.RemoveChild(this);
-			}
-			else
-			{
-				Parent.AddChild(new SetupStepComPortOne((ConnectionWindow)Parent, Parent, this.currentPrinterSetupStatus));
-				Parent.RemoveChild(this);
-			}
+			WizardWindow.ChangeToInstallDriverOrComPortOne();
 		}
 
 		private void NextButton_Click(object sender, EventArgs mouseEvent)
@@ -220,8 +191,7 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			{
 				try
 				{
-					int baudRateInt = Convert.ToInt32(baudRate);
-					this.ActivePrinter.BaudRate = baudRate;
+					ActiveSliceSettings.Instance.Helpers.SetBaudRate(baudRate);
 					return true;
 				}
 				catch
@@ -240,11 +210,11 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 		private string GetSelectedBaudRate()
 		{
-			foreach (BaudRateRadioButton button in BaudRateButtonsList)
+			foreach (RadioButton button in BaudRateButtonsList)
 			{
 				if (button.Checked)
 				{
-					return button.BaudRate.ToString();
+					return button.Text;
 				}
 			}
 			if (otherBaudRateRadioButton.Checked)

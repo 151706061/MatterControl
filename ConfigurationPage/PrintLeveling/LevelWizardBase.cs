@@ -30,6 +30,7 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.SlicerConfiguration;
+using MatterHackers.MeshVisualizer;
 using MatterHackers.VectorMath;
 using System;
 
@@ -46,7 +47,7 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 		public enum RuningState { InitialStartupCalibration, UserRequestedCalibration }
 
 		protected static readonly string initialPrinterSetupStepText = "Initial Printer Setup".Localize();
-		protected static readonly string requiredPageInstructions1 = "Congratulations on setting up your new printer. Before starting your first print we need to run a simple calibration procedure.";
+		protected static readonly string requiredPageInstructions1 = "Congratulations on connecting to your new printer. Before starting your first print we need to run a simple calibration procedure.";
 		protected static readonly string requiredPageInstructions2 = "The next few screens will walk your through the print leveling wizard.";
 
 		protected static readonly string homingPageStepText = "Homing The Printer".Localize();
@@ -56,7 +57,7 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 		protected static readonly string doneInstructionsText = LocalizedString.Get("Congratulations!\n\nAuto Print Leveling is now configured and enabled.");
 		protected static readonly string doneInstructionsTextTwo = LocalizedString.Get("Remove the paper");
-		protected static readonly string doneInstructionsTextThree = LocalizedString.Get("If in the future you need to re-calibrate your printer, or you wish to turn Auto Print Leveling off, you can find the print leveling controls in 'Advanced Settings'->'Configuration'.\n\nClick 'Done' to close this window.");
+		protected static readonly string doneInstructionsTextThree = LocalizedString.Get("To re-calibrate the printer, or to turn off Auto Print Leveling, the print leveling controls can be found under 'Options'->'Calibration'.\n\nClick 'Done' to close this window.");
 		protected static readonly string stepTextBeg = LocalizedString.Get("Step");
 		protected static readonly string stepTextEnd = LocalizedString.Get("of");
 
@@ -79,12 +80,12 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 		public static Vector2 GetPrintLevelPositionToSample(int index)
 		{
-			Vector2 bedSize = ActiveSliceSettings.Instance.BedSize;
-			Vector2 printCenter = ActiveSliceSettings.Instance.PrintCenter;
+			Vector2 bedSize = ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size);
+			Vector2 printCenter = ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center);
 
-			switch (ActiveSliceSettings.Instance.BedShape)
+			switch (ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape))
 			{
-				case MeshVisualizer.MeshViewerWidget.BedShape.Circular:
+				case BedShape.Circular:
 					Vector2 firstPosition = new Vector2(printCenter.x, printCenter.y + (bedSize.y / 2) * .5);
 					switch (index)
 					{
@@ -101,7 +102,7 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 							throw new IndexOutOfRangeException();
 					}
 
-				case MeshVisualizer.MeshViewerWidget.BedShape.Rectangular:
+				case BedShape.Rectangular:
 				default:
 					switch (index)
 					{
@@ -122,6 +123,19 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 		private static SystemWindow printLevelWizardWindow;
 
+		public static void ShowPrintLevelWizard()
+		{
+			LevelWizardBase.RuningState runningState = LevelWizardBase.RuningState.UserRequestedCalibration;
+
+			if (ActiveSliceSettings.Instance.GetValue<bool>("print_leveling_required_to_print"))
+			{
+				// run in the first run state
+				runningState = LevelWizardBase.RuningState.InitialStartupCalibration;
+			}
+
+			ShowPrintLevelWizard(runningState);
+		}
+
 		public static void ShowPrintLevelWizard(LevelWizardBase.RuningState runningState)
 		{
 			if (printLevelWizardWindow == null)
@@ -140,10 +154,10 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 		private static LevelWizardBase CreateAndShowWizard(LevelWizardBase.RuningState runningState)
 		{
-			PrintLevelingData levelingData = PrintLevelingData.GetForPrinter(ActivePrinterProfile.Instance.ActivePrinter);
+			PrintLevelingData levelingData = ActiveSliceSettings.Instance.Helpers.GetPrintLevelingData();
 
 			LevelWizardBase printLevelWizardWindow;
-			switch (levelingData.levelingSystem)
+			switch (levelingData.CurrentPrinterLevelingSystem)
 			{
 				case PrintLevelingData.LevelingSystem.Probe2Points:
 					printLevelWizardWindow = new LevelWizard2Point(runningState);
@@ -151,6 +165,14 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 				case PrintLevelingData.LevelingSystem.Probe3Points:
 					printLevelWizardWindow = new LevelWizard3Point(runningState);
+					break;
+
+				case PrintLevelingData.LevelingSystem.Probe7PointRadial:
+					printLevelWizardWindow = new LevelWizard7PointRadial(runningState);
+					break;
+
+				case PrintLevelingData.LevelingSystem.Probe13PointRadial:
+					printLevelWizardWindow = new LevelWizard13PointRadial(runningState);
 					break;
 
 				default:

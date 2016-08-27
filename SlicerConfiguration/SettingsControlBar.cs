@@ -35,20 +35,15 @@ using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl.SlicerConfiguration
 {
-	public class EnhancedSettingsControlBar : FlowLayoutWidget
+	public class SettingsControlBar : FlowLayoutWidget
 	{
-		public EnhancedSettingsControlBar()
+		public SettingsControlBar()
 		{
 			this.HAnchor = HAnchor.ParentLeftRight;
-			//this.AddChild(GetSliceEngineContainer());
 
-			int numberOfHeatedExtruders = 1;
-			if (!ActiveSliceSettings.Instance.ExtrudersShareTemperature)
-			{
-				numberOfHeatedExtruders = ActiveSliceSettings.Instance.ExtruderCount;
-			}
+			int numberOfHeatedExtruders = ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count);
 
-			this.AddChild(new SliceSelectorWidget("Quality".Localize(), RGBA_Bytes.Yellow, "quality"));
+			this.AddChild(new PresetSelectorWidget("Quality".Localize(), RGBA_Bytes.Yellow, NamedSettingsLayers.Quality, 0));
 			this.AddChild(new GuiWidget(8, 0));
 
 			if (numberOfHeatedExtruders > 1)
@@ -63,57 +58,16 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 					}
 					int colorIndex = i % colorList.Count;
 					RGBA_Bytes color = colorList[colorIndex];
-					this.AddChild(new SliceSelectorWidget(string.Format("{0} {1}", "Material".Localize(), i + 1), color, "material", i + 1));
+					this.AddChild(new PresetSelectorWidget(string.Format("{0} {1}", "Material".Localize(), i + 1), color, NamedSettingsLayers.Material, i));
 				}
 			}
 			else
 			{
-				this.AddChild(new SliceSelectorWidget("Material".Localize(), RGBA_Bytes.Orange, "material"));
+				this.AddChild(new PresetSelectorWidget("Material".Localize(), RGBA_Bytes.Orange, NamedSettingsLayers.Material, 0));
 			}
 
-			//this.AddChild(new GuiWidget(6, 0));
-			//this.AddChild(new SliceSelectorWidget("Item", RGBA_Bytes.Violet));
-			this.Height = 60 * TextWidget.GlobalPointSizeScaleRatio;
-		}
-
-		private event EventHandler unregisterEvents;
-
-		private void AddHandlers()
-		{
-			//
-		}
-
-		public override void OnClosed(EventArgs e)
-		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
-			base.OnClosed(e);
-		}
-	}
-
-	public class SettingsControlBar : FlowLayoutWidget
-	{
-		public SettingsControlBar()
-			: base(FlowDirection.TopToBottom)
-		{
-			SetDisplayAttributes();
-			AddChildElements();
-		}
-
-		private void SetDisplayAttributes()
-		{
-			this.HAnchor |= HAnchor.ParentLeftRight;
-			this.BackgroundColor = ActiveTheme.Instance.TransparentDarkOverlay;
-			this.Padding = new BorderDouble(8);
-		}
-
-		private void AddChildElements()
-		{
-			EnhancedSettingsControlBar topRow = new EnhancedSettingsControlBar();
-			//this.AddChild(bottomRow);
-			this.AddChild(topRow);
+			this.Height = 60 * GuiWidget.DeviceScale;
 		}
 	}
 }
+	

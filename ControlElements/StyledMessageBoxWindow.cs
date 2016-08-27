@@ -2,6 +2,7 @@
 using MatterHackers.Agg.Font;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
 using System;
 
 namespace MatterHackers.MatterControl
@@ -13,31 +14,60 @@ namespace MatterHackers.MatterControl
 		private FlowLayoutWidget middleRowContainer;
 		private TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 
-		public delegate void MessageBoxDelegate(bool response);
-
-		private MessageBoxDelegate responseCallback;
+		private Action<bool> responseCallback;
 
 		public enum MessageType { OK, YES_NO };
+		double extraTextScaling = 1;
 
-		public static void ShowMessageBox(MessageBoxDelegate callback, String message, string caption, MessageType messageType = MessageType.OK, string yesOk = "", string no = "")
+		public static void ShowMessageBox(Action<bool> callback, String message, string caption, MessageType messageType = MessageType.OK, string yesOk = "", string no = "")
 		{
 			ShowMessageBox(callback, message, caption, null, messageType, yesOk, no);
 		}
 
-		public static void ShowMessageBox(MessageBoxDelegate callback, string message, string caption, GuiWidget[] extraWidgetsToAdd, MessageType messageType, string yesOk = "", string no = "")
+		public static void ShowMessageBox(Action<bool> callback, string message, string caption, GuiWidget[] extraWidgetsToAdd, MessageType messageType, string yesOk = "", string no = "")
 		{
 			StyledMessageBox messageBox = new StyledMessageBox(callback, message, caption, messageType, extraWidgetsToAdd, 400, 300, yesOk, no);
+			messageBox.CenterInParent = true;
 			messageBox.ShowAsSystemWindow();
 		}
 
-		public StyledMessageBox(MessageBoxDelegate callback, String message, string windowTitle, MessageType messageType, GuiWidget[] extraWidgetsToAdd, double width, double height, string yesOk, string no)
+		public StyledMessageBox(Action<bool> callback, String message, string windowTitle, MessageType messageType, GuiWidget[] extraWidgetsToAdd, double width, double height, string yesOk, string no)
 			: base(width, height)
 		{
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				extraTextScaling = 1.33333;
+			}
+
+			textImageButtonFactory.fontSize = extraTextScaling * textImageButtonFactory.fontSize;
+			if (yesOk == "")
+			{
+				if (messageType == MessageType.OK)
+				{
+					yesOk = "Ok".Localize();
+				}
+				else
+				{
+					yesOk = "Yes".Localize();
+				}
+			}
+			if (no == "")
+			{
+				no = "No".Localize();
+			}
+
 			responseCallback = callback;
 			unwrappedMessage = message;
 			FlowLayoutWidget topToBottom = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			topToBottom.AnchorAll();
-			topToBottom.Padding = new BorderDouble(3, 0, 3, 5);
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				topToBottom.Padding = new BorderDouble(12, 12, 13, 8);
+			}
+			else
+			{
+				topToBottom.Padding = new BorderDouble(3, 0, 3, 5);
+			}
 
 			// Creates Header
 			FlowLayoutWidget headerRow = new FlowLayoutWidget(FlowDirection.LeftToRight);
@@ -48,7 +78,7 @@ namespace MatterHackers.MatterControl
 
 			//Creates Text and adds into header
 			{
-				TextWidget elementHeader = new TextWidget(windowTitle, pointSize: 14);
+				TextWidget elementHeader = new TextWidget(windowTitle, pointSize: 14 * extraTextScaling);
 				elementHeader.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 				elementHeader.HAnchor = HAnchor.ParentLeftRight;
 				elementHeader.VAnchor = Agg.UI.VAnchor.ParentBottom;
@@ -67,7 +97,7 @@ namespace MatterHackers.MatterControl
 				middleRowContainer.BackgroundColor = ActiveTheme.Instance.SecondaryBackgroundColor;
 			}
 
-			messageContainer = new TextWidget(message, textColor: ActiveTheme.Instance.PrimaryTextColor);
+			messageContainer = new TextWidget(message, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 12 * extraTextScaling);
 			messageContainer.AutoExpandBoundsToText = true;
 			messageContainer.HAnchor = Agg.UI.HAnchor.ParentLeft;
 			middleRowContainer.AddChild(messageContainer);
@@ -90,7 +120,6 @@ namespace MatterHackers.MatterControl
 				buttonRow.Padding = new BorderDouble(0, 3);
 			}
 
-			int minButtonWidth = (int)(50 * TextWidget.GlobalPointSizeScaleRatio + .5);
 
 			switch (messageType)
 			{
@@ -98,29 +127,13 @@ namespace MatterHackers.MatterControl
 					{
 						Title = "MatterControl - " + "Please Confirm".Localize();
 						Button yesButton = textImageButtonFactory.Generate(yesOk, centerText: true);
-						if (yesOk == "")
-						{
-							yesOk = "Yes".Localize();
-							textImageButtonFactory.FixedWidth = minButtonWidth;
-							yesButton = textImageButtonFactory.Generate(yesOk, centerText: true);
-							textImageButtonFactory.FixedWidth = 0;
-						}
-						yesButton.Width = Math.Max(minButtonWidth, yesButton.Width);
 						yesButton.Click += new EventHandler(okButton_Click);
 						yesButton.Cursor = Cursors.Hand;
 						buttonRow.AddChild(yesButton);
 
-						//buttonRow.AddChild(new HorizontalSpacer());
+						buttonRow.AddChild(new HorizontalSpacer());
 
 						Button noButton = textImageButtonFactory.Generate(no, centerText: true);
-						if (no == "")
-						{
-							no = "No".Localize();
-							textImageButtonFactory.FixedWidth = minButtonWidth;
-							noButton = textImageButtonFactory.Generate(no, centerText: true);
-							textImageButtonFactory.FixedWidth = 0;
-						}
-						noButton.Width = Math.Max(minButtonWidth, noButton.Width);
 						noButton.Click += new EventHandler(noButton_Click);
 						noButton.Cursor = Cursors.Hand;
 						buttonRow.AddChild(noButton);
@@ -131,14 +144,7 @@ namespace MatterHackers.MatterControl
 					{
 						Title = "MatterControl - " + "Alert".Localize();
 						Button okButton = textImageButtonFactory.Generate(LocalizedString.Get("Ok"), centerText: true);
-						if (yesOk == "")
-						{
-							yesOk = "Ok".Localize();
-							textImageButtonFactory.FixedWidth = minButtonWidth;
-							okButton = textImageButtonFactory.Generate(yesOk, centerText: true);
-							textImageButtonFactory.FixedWidth = 0;
-						}
-						okButton.Width = Math.Max(minButtonWidth, okButton.Width);
+						okButton.Name = "Ok Button";
 						okButton.Cursor = Cursors.Hand;
 						okButton.Click += new EventHandler(okButton_Click);
 						buttonRow.AddChild(okButton);
@@ -169,7 +175,7 @@ namespace MatterHackers.MatterControl
 				double wrappingSize = middleRowContainer.Width - (middleRowContainer.Padding.Width + messageContainer.Margin.Width);
 				if (wrappingSize > 0)
 				{
-					EnglishTextWrapping wrapper = new EnglishTextWrapping(12);
+					EnglishTextWrapping wrapper = new EnglishTextWrapping(12 * extraTextScaling * GuiWidget.DeviceScale);
 					string wrappedMessage = wrapper.InsertCRs(unwrappedMessage, wrappingSize);
 					messageContainer.Text = wrappedMessage;
 				}
@@ -178,7 +184,7 @@ namespace MatterHackers.MatterControl
 
 		private void noButton_Click(object sender, EventArgs mouseEvent)
 		{
-			UiThread.RunOnIdle(CloseOnIdle);
+			UiThread.RunOnIdle(Close);
 			if (responseCallback != null)
 			{
 				responseCallback(false);
@@ -187,16 +193,11 @@ namespace MatterHackers.MatterControl
 
 		private void okButton_Click(object sender, EventArgs mouseEvent)
 		{
-			UiThread.RunOnIdle(CloseOnIdle);
+			UiThread.RunOnIdle(Close);
 			if (responseCallback != null)
 			{
 				responseCallback(true);
 			}
-		}
-
-		private void CloseOnIdle(object state)
-		{
-			Close();
 		}
 	}
 }

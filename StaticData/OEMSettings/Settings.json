@@ -1,33 +1,18 @@
 {
   "ThemeColor": "",
   "AffiliateCode": "5NEP8W",
-  "WindowTitleExtra": "",
+  "WindowTitleExtra": "Lars Title",
   "ShowShopButton": true,
   "CheckForUpdatesOnFirstRun": false,
-  "PrinterWhiteList": [
-    "3D Factory",
-    "3D Stuffmaker",
-    "Airwolf 3D",
-    "Blue Eagle Labs",
-    "Deezmaker",
-    "Leapfrog",
-    "Lulzbot",
-    "MakerGear",
-    "Me3D",
-    "OpenBeam",
-    "Other",
-    "Portabee",
-    "Printrbot",
-    "PrintSpace",
-    "Revolution 3D Printers",
-    "ROBO 3D",
-    "SeeMeCNC",
-    "Solidoodle",
-    "Type A Machines",
-    "Velleman",
-    "Wanhao USA",
+  "ManufacturerNameMappings": [
+  	{
+  		"NameOnDisk": "Esagono",
+  		"NameToDisplay": "Esagonò",
+  	}
   ],
   "PreloadedLibraryFiles": [
+	"MatterControl - Coin.stl",
+    "MatterControl - Stand.stl",
     "Calibration - Box.stl"
   ]
 }

@@ -31,62 +31,57 @@ using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl.SlicerConfiguration
 {
-	public class Slic3rEngineMappings : SliceEngineMaping
+	public class Slic3rEngineMappings : SliceEngineMapping
 	{
-		private static List<string> hideItems = null;
+		public static readonly Slic3rEngineMappings Instance = new Slic3rEngineMappings();
 
-		// private so that this class is a sigleton
-		private Slic3rEngineMappings()
+		private List<string> hiddenSettings = null;
+
+		// Singleton use only - prevent external construction
+		private Slic3rEngineMappings() : base ("Slic3r")
 		{
+			hiddenSettings = new List<string>();
+			hiddenSettings.Add("cool_extruder_lift");
+			hiddenSettings.Add("support_material_create_internal_support");
+			hiddenSettings.Add("support_material_create_perimeter");
+			hiddenSettings.Add("min_extrusion_before_retract");
+			hiddenSettings.Add("support_material_xy_distance");
+			hiddenSettings.Add("support_material_z_distance");
+			hiddenSettings.Add(SettingsKey.center_part_on_bed);
+			hiddenSettings.Add(SettingsKey.expand_thin_walls);
+			hiddenSettings.Add(SettingsKey.fill_thin_gaps);
+			hiddenSettings.Add("infill_overlap_perimeter");
+			hiddenSettings.Add("support_type");
+			hiddenSettings.Add("infill_type");
+			hiddenSettings.Add("create_raft");
+			hiddenSettings.Add("z_gap");
+			hiddenSettings.Add(SettingsKey.bottom_clip_amount);
+			hiddenSettings.Add("gcode_output_type");
+			hiddenSettings.Add("raft_extra_distance_around_part");
+			hiddenSettings.Add("output_only_first_layer");
+			hiddenSettings.Add("raft_air_gap");
+			hiddenSettings.Add("support_air_gap");
+			hiddenSettings.Add("repair_outlines_extensive_stitching");
+			hiddenSettings.Add("repair_outlines_keep_open");
+			hiddenSettings.Add("complete_objects");
+			hiddenSettings.Add("output_filename_format");
+			hiddenSettings.Add("support_material_percent");
+			hiddenSettings.Add("post_process");
+			hiddenSettings.Add("extruder_clearance_height");
+			hiddenSettings.Add("extruder_clearance_radius");
+			hiddenSettings.Add("wipe_shield_distance");
+			hiddenSettings.Add(SettingsKey.heat_extruder_before_homing);
+			hiddenSettings.Add("extruders_share_temperature");
+			hiddenSettings.Add("print_leveling_method");
+			hiddenSettings.Add("solid_shell");
+			hiddenSettings.Add("retractWhenChangingIslands");
+			hiddenSettings.Add(SettingsKey.perimeter_start_end_overlap);
 		}
 
-		private static Slic3rEngineMappings instance = null;
-
-		public static Slic3rEngineMappings Instance
+		public override bool MapContains(string key)
 		{
-			get
-			{
-				if (instance == null)
-				{
-					instance = new Slic3rEngineMappings();
-					hideItems = new List<string>();
-					hideItems.Add("cool_extruder_lift");
-					hideItems.Add("support_material_create_internal_support");
-					hideItems.Add("min_extrusion_before_retract");
-					hideItems.Add("support_material_xy_distance");
-					hideItems.Add("support_material_z_distance");
-					hideItems.Add("center_part_on_bed");
-					hideItems.Add("infill_overlap_perimeter");
-					hideItems.Add("support_type");
-					hideItems.Add("infill_type");
-					hideItems.Add("create_raft");
-					hideItems.Add("z_gap");
-					hideItems.Add("bottom_clip_amount");
-					hideItems.Add("gcode_output_type");
-					hideItems.Add("raft_extra_distance_around_part");
-					hideItems.Add("raft_air_gap");
-					hideItems.Add("repair_outlines_extensive_stitching");
-					hideItems.Add("repair_outlines_keep_open");
-					hideItems.Add("complete_objects");
-					hideItems.Add("output_filename_format");
-					hideItems.Add("post_process");
-					hideItems.Add("extruder_clearance_height");
-					hideItems.Add("extruder_clearance_radius");
-					hideItems.Add("wipe_shield_distance");
-					hideItems.Add("heat_extruder_before_homing");
-					hideItems.Add("extruders_share_temperature");
-				}
-				return instance;
-			}
-		}
-
-		public override bool MapContains(string defaultKey)
-		{
-			if (hideItems.Contains(defaultKey))
-			{
-				return false;
-			}
-			return true;
+			// Visible items are anything not in hiddenSettings or that does not start with 'MatterControl.'
+			return !hiddenSettings.Contains(key);
 		}
 	}
 }

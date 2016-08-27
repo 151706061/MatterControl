@@ -43,11 +43,13 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private PartPreviewContent partPreviewWidget;
 
 		public PartPreviewMainWindow(PrintItemWrapper printItem, View3DWidget.AutoRotate autoRotate3DView, View3DWidget.OpenMode openMode = View3DWidget.OpenMode.Viewing)
-			: base(690, 340)
+			: base(750, 550)
 		{
 			UseOpenGL = true;
 			string partPreviewTitle = LocalizedString.Get("MatterControl");
 			Title = string.Format("{0}: ", partPreviewTitle) + Path.GetFileName(printItem.Name);
+
+			this.Name = "Part Preview Window";
 
 			partPreviewWidget = new PartPreviewContent(printItem, View3DWidget.WindowMode.StandAlone, autoRotate3DView, openMode);
 			partPreviewWidget.Closed += (sender, e) =>
@@ -57,7 +59,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 #if __ANDROID__
 			TerminalWidget terminalWidget = new TerminalWidget(true);
-			this.AddChild(new SoftKeyboardContentOffset(partPreviewWidget, SoftKeyboardContentOffset.AndroidKeyboardOffset));
+			this.AddChild(new SoftKeyboardContentOffset(partPreviewWidget));
 			//mainContainer.Closed += (sender, e) => { Close(); };
 #else
 			this.AddChild(partPreviewWidget);
@@ -65,8 +67,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			AddHandlers();
 
-			Width = 640;
-			Height = 480;
+			Width = 750;
+			Height = 550;
 
 			MinimumSize = new Vector2(400, 300);
 			ShowAsSystemWindow();
@@ -74,7 +76,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void AddHandlers()
 		{
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
+			ActiveTheme.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
 		}
 
 		public void ThemeChanged(object sender, EventArgs e)

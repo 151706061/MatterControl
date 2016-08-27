@@ -7,6 +7,7 @@ using MatterHackers.MatterControl.PrinterControls.PrinterConnections;
 using MatterHackers.MatterControl.PrintQueue;
 using MatterHackers.VectorMath;
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace MatterHackers.MatterControl
@@ -16,52 +17,18 @@ namespace MatterHackers.MatterControl
 		static public PopOutTextTabWidget sliceSettingsPopOut = null;
 		static public PopOutTextTabWidget controlsPopOut = null;
 
-		public MenuOptionSettings()
-			: base("Settings".Localize())
+		public MenuOptionSettings() : base("View".Localize())
 		{
 		}
 
-		override protected TupleList<string, Func<bool>> GetMenuItems()
+		protected override IEnumerable<MenuItemAction> GetMenuActions()
 		{
-			return new TupleList<string, Func<bool>>
-            {
-                {LocalizedString.Get("Printing"), openPrintingPannel_Click},
-                {LocalizedString.Get("Controls"), openControlsPannel_Click},
-				{LocalizedString.Get("Show Terminal"), openTermanialPannel_Click},
-            };
-		}
-
-		private bool openPrintingPannel_Click()
-		{
-			UiThread.RunOnIdle((state) =>
+			return new List<MenuItemAction>
 			{
-				if (sliceSettingsPopOut != null)
-				{
-					sliceSettingsPopOut.ShowInWindow();
-				}
-			});
-			return true;
-		}
-
-		private bool openControlsPannel_Click()
-		{
-			UiThread.RunOnIdle((state) =>
-			{
-				if (controlsPopOut != null)
-				{
-					controlsPopOut.ShowInWindow();
-				}
-			});
-			return true;
-		}
-
-		private bool openTermanialPannel_Click()
-		{
-			UiThread.RunOnIdle((state) =>
-			{
-				TerminalWindow.Show();
-			});
-			return true;
+				new MenuItemAction("Settings".Localize(), () => sliceSettingsPopOut?.ShowInWindow()),
+				new MenuItemAction("Controls".Localize(), () => controlsPopOut?.ShowInWindow()),
+				new MenuItemAction("Terminal".Localize(), () => UiThread.RunOnIdle(TerminalWindow.Show)),
+			};
 		}
 	}
 }

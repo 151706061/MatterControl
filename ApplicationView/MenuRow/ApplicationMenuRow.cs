@@ -30,6 +30,7 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.MatterControl.CustomWidgets;
+using MatterHackers.MatterControl.AboutPage;
 using System;
 using MatterHackers.Localizations;
 
@@ -37,9 +38,17 @@ namespace MatterHackers.MatterControl
 {
 	public class ApplicationMenuRow : FlowLayoutWidget
 	{
-		private static FlowLayoutWidget rightElement;
-		private event EventHandler unregisterEvents;
+		public delegate void AddRightElementDelegate(GuiWidget iconContainer);
+
+		public static event AddRightElementDelegate AddRightElement;
+
+		public static bool AlwaysShowUpdateStatus { get; set; }
+
+		private FlowLayoutWidget rightElement;
+
 		LinkButtonFactory linkButtonFactory = new LinkButtonFactory();
+
+		private event EventHandler unregisterEvents;
 
 		GuiWidget popUpAboutPage;
 
@@ -49,10 +58,6 @@ namespace MatterHackers.MatterControl
 			linkButtonFactory.textColor = ActiveTheme.Instance.PrimaryTextColor;
 			linkButtonFactory.fontSize = 8;
 
-			Button signInLink = linkButtonFactory.Generate("(Sign Out)");
-			signInLink.VAnchor = Agg.UI.VAnchor.ParentCenter;
-			signInLink.Margin = new BorderDouble(top: 0);
-
 			this.HAnchor = HAnchor.ParentLeftRight;
 			this.BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
@@ -60,11 +65,6 @@ namespace MatterHackers.MatterControl
 			MenuOptionFile menuOptionFile = new MenuOptionFile();
 			this.AddChild(menuOptionFile);
 
-#if false
-			// put in the view menu
-			MenuOptionView menuOptionView = new MenuOptionView();
-			this.AddChild(menuOptionView);
-#endif
 			MenuOptionSettings menuOptionSettings = new MenuOptionSettings();
 			this.AddChild(menuOptionSettings);
 
@@ -72,22 +72,19 @@ namespace MatterHackers.MatterControl
 			MenuOptionHelp menuOptionHelp = new MenuOptionHelp();
 			this.AddChild(menuOptionHelp);
 
-			linkButtonFactory.textColor = RGBA_Bytes.Red;
+			//linkButtonFactory.textColor = ActiveTheme.Instance.SecondaryAccentColor;
 			linkButtonFactory.fontSize = 10;
 
 			Button updateStatusMessage = linkButtonFactory.Generate("Update Available");
 			UpdateControlData.Instance.UpdateStatusChanged.RegisterEvent(SetUpdateNotification, ref unregisterEvents);
-			popUpAboutPage = new GuiWidget();
+			popUpAboutPage = new FlowLayoutWidget();
 			popUpAboutPage.Margin = new BorderDouble(30, 0, 0, 0);
 			popUpAboutPage.HAnchor = HAnchor.FitToChildren;
 			popUpAboutPage.VAnchor = VAnchor.FitToChildren | VAnchor.ParentCenter;
 			popUpAboutPage.AddChild(updateStatusMessage);
 			updateStatusMessage.Click += (sender, e) =>
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					AboutWindow.Show();
-				});
+				UiThread.RunOnIdle(CheckForUpdateWindow.Show);
 			};
 			this.AddChild(popUpAboutPage);
 			SetUpdateNotification(this, null);
@@ -103,19 +100,20 @@ namespace MatterHackers.MatterControl
 
 			this.Padding = new BorderDouble(0, 0, 6, 0);
 
-			if (privateAddRightElement != null)
+			AddRightElement?.Invoke(rightElement);
+
+			// When the application is first started, plugins are loaded after the MainView control has been initialized,
+			// and as such they not around when this constructor executes. In that case, we run the AddRightElement 
+			// delegate after the plugins have been initialized via the PluginsLoaded event
+			ApplicationController.Instance.PluginsLoaded.RegisterEvent((s, e) =>
 			{
-				privateAddRightElement(rightElement);
-			}
+				AddRightElement?.Invoke(rightElement);
+			}, ref unregisterEvents);
 		}
 
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
-
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
 		}
 
@@ -129,10 +127,7 @@ namespace MatterHackers.MatterControl
 						Button updateStatusMessage = linkButtonFactory.Generate("Check For Update".Localize());
 						updateStatusMessage.Click += (sender2, e) =>
 						{
-							UiThread.RunOnIdle((state) =>
-							{
-								AboutWindow.Show();
-							});
+							UiThread.RunOnIdle(CheckForUpdateWindow.Show);
 						};
 						popUpAboutPage.AddChild(updateStatusMessage);
 						popUpAboutPage.Visible = true;
@@ -147,42 +142,52 @@ namespace MatterHackers.MatterControl
 						Button updateStatusMessage = linkButtonFactory.Generate("Update Available".Localize());
 						updateStatusMessage.Click += (sender2, e) =>
 						{
-							UiThread.RunOnIdle((state) =>
-							{
-								AboutWindow.Show();
-							});
+							UiThread.RunOnIdle(CheckForUpdateWindow.Show);
 						};
+						var updateMark = new UpdateNotificationMark();
+						updateMark.Margin = new BorderDouble(0, 0, 3, 2);
+						updateMark.VAnchor = VAnchor.ParentTop;
+						popUpAboutPage.AddChild(updateMark);
 						popUpAboutPage.AddChild(updateStatusMessage);
 						popUpAboutPage.Visible = true;
 					}
 					break;
 
 				case UpdateControlData.UpdateStatusStates.UpToDate:
+					if (AlwaysShowUpdateStatus)
+					{
+						popUpAboutPage.RemoveAllChildren();
+						TextWidget updateStatusMessage = new TextWidget("Up to Date".Localize(), textColor: linkButtonFactory.textColor, pointSize: linkButtonFactory.fontSize);
+						updateStatusMessage.VAnchor = VAnchor.ParentCenter;
+						popUpAboutPage.AddChild(updateStatusMessage);
+						popUpAboutPage.Visible = true;
+
+						UiThread.RunOnIdle((state) => popUpAboutPage.Visible = false, 3);
+						AlwaysShowUpdateStatus = false;
+					}
+					else
+					{
+						popUpAboutPage.Visible = false;
+					}
+					break;
+
 				case UpdateControlData.UpdateStatusStates.CheckingForUpdate:
-					popUpAboutPage.Visible = false;
+					if (AlwaysShowUpdateStatus)
+					{
+						popUpAboutPage.RemoveAllChildren();
+						TextWidget updateStatusMessage = new TextWidget("Checking For Update...".Localize(), textColor: linkButtonFactory.textColor, pointSize: linkButtonFactory.fontSize);
+						updateStatusMessage.VAnchor = VAnchor.ParentCenter;
+						popUpAboutPage.AddChild(updateStatusMessage);
+						popUpAboutPage.Visible = true;
+					}
+					else
+					{
+						popUpAboutPage.Visible = false;
+					}
 					break;
 
 				default:
 					throw new NotImplementedException();
-			}
-		}
-
-		public delegate void AddRightElementDelegate(GuiWidget iconContainer);
-
-		private static event AddRightElementDelegate privateAddRightElement;
-
-		public static event AddRightElementDelegate AddRightElement
-		{
-			add
-			{
-				privateAddRightElement += value;
-				// and call it right away
-				value(rightElement);
-			}
-
-			remove
-			{
-				privateAddRightElement -= value;
 			}
 		}
 	}

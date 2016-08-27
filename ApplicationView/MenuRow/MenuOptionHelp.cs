@@ -2,74 +2,39 @@
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.ContactForm;
+using MatterHackers.MatterControl.AboutPage;
 using MatterHackers.VectorMath;
 using System;
+using System.Collections.Generic;
 
 namespace MatterHackers.MatterControl
 {
 	public class MenuOptionHelp : MenuBase
 	{
-		public MenuOptionHelp()
-			: base("Help".Localize())
+		public MenuOptionHelp() : base("Help".Localize())
 		{
+			Name = "Help Menu";
 		}
 
-		override protected TupleList<string, Func<bool>> GetMenuItems()
+		protected override IEnumerable<MenuItemAction> GetMenuActions()
 		{
-			return new TupleList<string, Func<bool>>
-            {
-                {LocalizedString.Get("Getting Started"), gettingStarted_Click},
-                {LocalizedString.Get("View Help"), help_Click},
-                {LocalizedString.Get("Report a Bug"), bug_Click},
-				{LocalizedString.Get("Release Notes"), notes_Click},
-                {LocalizedString.Get("About MatterControl"), about_Click},
-            };
-		}
-
-		private bool bug_Click()
-		{
-			UiThread.RunOnIdle((state) =>
+			return new List<MenuItemAction>
 			{
-				ContactFormWindow.Open();
-			});
-			return true;
-		}
-
-		private bool help_Click()
-		{
-			UiThread.RunOnIdle((state) =>
-			{
-				MatterControlApplication.Instance.LaunchBrowser("http://www.mattercontrol.com/articles");
-			});
-			return true;
-		}
-
-		private bool about_Click()
-		{
-			UiThread.RunOnIdle((state) =>
-			{
-				AboutWindow.Show();
-			});
-			return true;
-		}
-
-		private bool notes_Click()
-		{
-			UiThread.RunOnIdle((state) =>
+				new MenuItemAction("Forums".Localize(), () => MatterControlApplication.Instance.LaunchBrowser("https://forums.matterhackers.com/category/20/mattercontrol")),
+				new MenuItemAction("Wiki".Localize(), () => MatterControlApplication.Instance.LaunchBrowser("http://wiki.mattercontrol.com")),
+				new MenuItemAction("Guides and Articles".Localize(), () => MatterControlApplication.Instance.LaunchBrowser("http://www.matterhackers.com/topic/mattercontrol")),
+				new MenuItemAction("Release Notes".Localize(), () => MatterControlApplication.Instance.LaunchBrowser("http://wiki.mattercontrol.com/Release_Notes")),
+				new MenuItemAction("------------------------", null),
+				new MenuItemAction("Report a Bug".Localize(), () => MatterControlApplication.Instance.LaunchBrowser("https://github.com/MatterHackers/MatterControl/issues")),
+				new MenuItemAction("Check For Update".Localize(), () =>
 				{
-					MatterControlApplication.Instance.LaunchBrowser("http://wiki.mattercontrol.com/Release_Notes");
-				});
-			return true;
-		}
-
-		private bool gettingStarted_Click()
-		{
-			UiThread.RunOnIdle((state) =>
-			{
-				MatterControlApplication.Instance.LaunchBrowser("http://www.mattercontrol.com/articles/mattercontrol-getting-started");
-			});
-
-			return true;
+					ApplicationMenuRow.AlwaysShowUpdateStatus = true;
+					UpdateControlData.Instance.CheckForUpdateUserRequested();
+					CheckForUpdateWindow.Show();
+				}),
+				new MenuItemAction("------------------------", null),
+				new MenuItemAction("About MatterControl".Localize(), () => AboutWindow.Show()),
+			};
 		}
 	}
 }

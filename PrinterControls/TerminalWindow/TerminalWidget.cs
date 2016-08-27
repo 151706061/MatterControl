@@ -29,11 +29,16 @@ either expressed or implied, of the FreeBSD Project.
 
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
+using MatterHackers.Agg.Font;
+using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.MatterControl.PrinterCommunication;
+using MatterHackers.MatterControl.DataStorage;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 
 namespace MatterHackers.MatterControl
 {
@@ -53,6 +58,7 @@ namespace MatterHackers.MatterControl
 
 		public TerminalWidget(bool showInWindow)
 		{
+			this.Name = "TerminalWidget";
 			this.BackgroundColor = backgroundColor;
 			this.Padding = new BorderDouble(5, 0);
 			FlowLayoutWidget topLeftToRightLayout = new FlowLayoutWidget();
@@ -114,6 +120,7 @@ namespace MatterHackers.MatterControl
 
 					textScrollWidget = new TextScrollWidget(PrinterOutputCache.Instance.PrinterLines);
 					//outputScrollWidget.Height = 100;
+					Debug.WriteLine(PrinterOutputCache.Instance.PrinterLines);
 					textScrollWidget.BackgroundColor = ActiveTheme.Instance.SecondaryBackgroundColor;
 					textScrollWidget.TextColor = ActiveTheme.Instance.PrimaryTextColor;
 					textScrollWidget.HAnchor = HAnchor.ParentLeftRight;
@@ -133,7 +140,7 @@ namespace MatterHackers.MatterControl
 				manualEntryLayout.BackgroundColor = this.backgroundColor;
 				manualEntryLayout.HAnchor = HAnchor.ParentLeftRight;
 				{
-					manualCommandTextEdit = new MHTextEditWidget("");
+					manualCommandTextEdit = new MHTextEditWidget("", typeFace: ApplicationController.MonoSpacedTypeFace);
 					//manualCommandTextEdit.BackgroundColor = RGBA_Bytes.White;
 					manualCommandTextEdit.Margin = new BorderDouble(right: 3);
 					manualCommandTextEdit.HAnchor = HAnchor.ParentLeftRight;
@@ -192,7 +199,7 @@ namespace MatterHackers.MatterControl
 			this.AnchorAll();
 		}
 
-		private void DoExportExportLog_Click(object state)
+		private void DoExportExportLog_Click()
 		{
 			SaveFileDialogParams saveParams = new SaveFileDialogParams("Save as Text|*.txt");
 			saveParams.Title = "MatterControl: Terminal Log";
@@ -202,31 +209,43 @@ namespace MatterHackers.MatterControl
 			FileDialog.SaveFileDialog(saveParams, onExportLogFileSelected);
 		}
 
-		private bool firstDraw = true;
-
-		public override void OnDraw(Graphics2D graphics2D)
+#if !__ANDROID__
+		public override void OnLoad(EventArgs args)
 		{
-			if (firstDraw)
-			{
-				filterOutput.Checked = UserSettings.Instance.Fields.GetBool(TerminalFilterOutputKey, false);
-				firstDraw = false;
-			}
-			base.OnDraw(graphics2D);
+			filterOutput.Checked = UserSettings.Instance.Fields.GetBool(TerminalFilterOutputKey, false);
+			UiThread.RunOnIdle(manualCommandTextEdit.Focus);
+			base.OnLoad(args);
 		}
+#endif
+
+		readonly static string writeFaildeWaring = "WARNING: Write Failed!".Localize();
+		readonly static string cantAccessPath = "Can't access '{0}'.".Localize();
 
 		private void onExportLogFileSelected(SaveFileDialogParams saveParams)
 		{
-			if (saveParams.FileName != null)
+			if (!string.IsNullOrEmpty(saveParams.FileName))
 			{
 				string filePathToSave = saveParams.FileName;
 				if (filePathToSave != null && filePathToSave != "")
 				{
-					textScrollWidget.WriteToFile(filePathToSave);
+					try
+					{
+						textScrollWidget.WriteToFile(filePathToSave);
+					}
+					catch(UnauthorizedAccessException e)
+					{
+						Debug.Print(e.Message);
+						GuiWidget.BreakInDebugger();
+						PrinterOutputCache.Instance.PrinterLines.Add("");
+						PrinterOutputCache.Instance.PrinterLines.Add(writeFaildeWaring);
+						PrinterOutputCache.Instance.PrinterLines.Add(cantAccessPath.FormatWith(filePathToSave));
+						PrinterOutputCache.Instance.PrinterLines.Add("");
+					}
 				}
 			}
 		}
 
-		private void CloseWindow(object state)
+		private void CloseWindow()
 		{
 			this.Parent.Close();
 		}

@@ -30,6 +30,7 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
@@ -86,7 +87,7 @@ namespace MatterHackers.MatterControl
 			BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
 			double oldHeight = textImageButtonFactory.FixedHeight;
-			textImageButtonFactory.FixedHeight = 30 * TextWidget.GlobalPointSizeScaleRatio;
+			textImageButtonFactory.FixedHeight = 30 * GuiWidget.DeviceScale;
 
 			TextWidget tempTypeLabel = new TextWidget(windowTitle, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 10);
 			tempTypeLabel.Margin = new BorderDouble(3);
@@ -105,7 +106,7 @@ namespace MatterHackers.MatterControl
 			tempLabelContainer.Height = 16;
 			tempLabelContainer.Margin = new BorderDouble(3, 0);
 
-			TextWidget tempLabel = new TextWidget(string.Format("mm / minute"), textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 10);
+			TextWidget tempLabel = new TextWidget("mm / minute".Localize(), textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 10);
 			tempLabel.HAnchor = HAnchor.ParentLeft;
 			tempLabel.VAnchor = VAnchor.ParentCenter;
 
@@ -128,22 +129,16 @@ namespace MatterHackers.MatterControl
 				TextWidget axisLabel;
 				if (settingsArray[i].StartsWith("e"))
 				{
-					int extruderIndex = (int)double.Parse(settingsArray[i].Substring(1)) + 1;
-					string extruderLabelTxt = LocalizedString.Get("Extruder");
-					axisLabel = new TextWidget(string.Format("{0} {1}", extruderLabelTxt, extruderIndex), textColor: ActiveTheme.Instance.PrimaryTextColor);
+					axisLabel = new TextWidget(string.Format("{0}(s)", "Extruder".Localize()), textColor: ActiveTheme.Instance.PrimaryTextColor);
 				}
 				else
 				{
-					string axisLabelText = LocalizedString.Get("Axis");
-					axisLabel = new TextWidget(string.Format("{0} {1}", axisLabelText, settingsArray[i]), textColor: ActiveTheme.Instance.PrimaryTextColor);
+					axisLabel = new TextWidget(string.Format("{0} {1}", "Axis".Localize(), settingsArray[i].ToUpper()), textColor: ActiveTheme.Instance.PrimaryTextColor);
 				}
 				axisLabel.VAnchor = VAnchor.ParentCenter;
 				leftRightEdit.AddChild(axisLabel);
 
-				GuiWidget hSpacer = new GuiWidget();
-				hSpacer.HAnchor = HAnchor.ParentLeftRight;
-
-				leftRightEdit.AddChild(hSpacer);
+				leftRightEdit.AddChild(new HorizontalSpacer());
 
 				// we add this to the listWithValues to make sure we build the string correctly on save.
 				TextWidget typeEdit = new TextWidget(settingsArray[i]);
@@ -172,10 +167,7 @@ namespace MatterHackers.MatterControl
 			Button cancelPresetsButton = textImageButtonFactory.Generate(LocalizedString.Get("Cancel"));
 			cancelPresetsButton.Click += (sender, e) =>
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					Close();
-				});
+				UiThread.RunOnIdle(Close);
 			};
 
 			FlowLayoutWidget buttonRow = new FlowLayoutWidget();
@@ -199,7 +191,7 @@ namespace MatterHackers.MatterControl
 			UiThread.RunOnIdle(DoSave_Click);
 		}
 
-		private void DoSave_Click(object state)
+		private void DoSave_Click()
 		{
 			bool first = true;
 			StringBuilder settingString = new StringBuilder();

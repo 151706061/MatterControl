@@ -1,12 +1,4 @@
-﻿using MatterHackers.Agg;
-using MatterHackers.Agg.UI;
-using MatterHackers.MatterControl.PartPreviewWindow;
-using MatterHackers.MatterControl.PrinterCommunication;
-using MatterHackers.MatterControl.PrintQueue;
-using MatterHackers.MatterControl.SlicerConfiguration;
-using MatterHackers.VectorMath;
-
-/*
+﻿/*
 Copyright (c) 2014, Kevin Pope
 All rights reserved.
 
@@ -37,6 +29,14 @@ either expressed or implied, of the FreeBSD Project.
 
 using System;
 
+using MatterHackers.Agg;
+using MatterHackers.Agg.UI;
+using MatterHackers.MatterControl.PartPreviewWindow;
+using MatterHackers.MatterControl.PrinterCommunication;
+using MatterHackers.MatterControl.PrintQueue;
+using MatterHackers.MatterControl.SlicerConfiguration;
+using MatterHackers.VectorMath;
+
 namespace MatterHackers.MatterControl
 {
 	public class WidescreenPanel : FlowLayoutWidget
@@ -49,8 +49,8 @@ namespace MatterHackers.MatterControl
 
 		private FlowLayoutWidget ColumnOne;
 		private FlowLayoutWidget ColumnTwo;
-		private double Force1PanelWidth = 990 * TextWidget.GlobalPointSizeScaleRatio;
-		private double Force2PanelWidth = 1590 * TextWidget.GlobalPointSizeScaleRatio;
+		private double Force1PanelWidth = 990 * GuiWidget.DeviceScale;
+		private double Force2PanelWidth = 1590 * GuiWidget.DeviceScale;
 
 		private GuiWidget leftBorderLine;
 
@@ -68,15 +68,9 @@ namespace MatterHackers.MatterControl
 			BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 			Padding = new BorderDouble(4);
 
-			ActivePrinterProfile.Instance.ActivePrinterChanged.RegisterEvent(LoadSettingsOnPrinterChanged, ref unregisterEvents);
 			PrinterConnectionAndCommunication.Instance.ActivePrintItemChanged.RegisterEvent(onActivePrintItemChanged, ref unregisterEvents);
-			ApplicationController.Instance.ReloadAdvancedControlsPanelTrigger.RegisterEvent(ReloadAdvancedControlsPanelTrigger, ref unregisterEvents);
-			this.BoundsChanged += new EventHandler(onBoundsChanges);
-		}
-
-		public void ReloadAdvancedControlsPanelTrigger(object sender, EventArgs e)
-		{
-			UiThread.RunOnIdle(ReloadAdvancedControlsPanel);
+			ApplicationController.Instance.AdvancedControlsPanelReloading.RegisterEvent((s, e) => UiThread.RunOnIdle(ReloadAdvancedControlsPanel), ref unregisterEvents);
+			this.BoundsChanged += onBoundsChanges;
 		}
 
 		public override void OnParentChanged(EventArgs e)
@@ -94,32 +88,9 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
-		private void onMouseEnterBoundsAdvancedControlsLink(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.ShowHoverText("View Manual Printer Controls and Slicing Settings");
-		}
-
-		private void onMouseLeaveBoundsAdvancedControlsLink(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.HideHoverText();
-		}
-
-		private void onMouseEnterBoundsPrintQueueLink(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.ShowHoverText("View Queue and Library");
-		}
-
-		private void onMouseLeaveBoundsPrintQueueLink(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.HideHoverText();
-		}
-
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
 		}
 
@@ -144,9 +115,11 @@ namespace MatterHackers.MatterControl
 			ColumnOne.AnchorAll();
 		}
 
-		private void LoadColumnTwo(object state = null)
+		private void LoadColumnTwo()
 		{
-			ColumnTwo.CloseAndRemoveAllChildren();
+			PopOutManager.SaveIfClosed = false;
+			ColumnTwo.CloseAllChildren();
+			PopOutManager.SaveIfClosed = true;
 
 			PartPreviewContent partViewContent = new PartPreviewContent(PrinterConnectionAndCommunication.Instance.ActivePrintItem, View3DWidget.WindowMode.Embeded, View3DWidget.AutoRotate.Enabled);
 			partViewContent.AnchorAll();
@@ -225,14 +198,9 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
-		public override void OnDraw(Graphics2D graphics2D)
-		{
-			base.OnDraw(graphics2D);
-		}
-
 		private void RemovePanelsAndCreateEmpties()
 		{
-			CloseAndRemoveAllChildren();
+			CloseAllChildren();
 
 			ColumnOne = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			ColumnTwo = new FlowLayoutWidget(FlowDirection.TopToBottom);
@@ -240,7 +208,7 @@ namespace MatterHackers.MatterControl
 			AddChild(ColumnOne);
 			leftBorderLine = new GuiWidget(vAnchor: VAnchor.ParentBottomTop);
 			leftBorderLine.Width = 15;
-			leftBorderLine.DrawBefore += (widget, graphics2D) =>
+			leftBorderLine.BeforeDraw += (widget, graphics2D) =>
 			{
 				RectangleDouble bounds = widget.LocalBounds;
 				bounds.Left += 3;
@@ -251,21 +219,15 @@ namespace MatterHackers.MatterControl
 			AddChild(ColumnTwo);
 		}
 
-		public void ReloadAdvancedControlsPanel(object state)
+		public void ReloadAdvancedControlsPanel()
 		{
 			PreChangePanels.CallEvents(this, null);
 		}
-
-		public void LoadSettingsOnPrinterChanged(object sender, EventArgs e)
-		{
-			ActiveSliceSettings.Instance.LoadAllSettings();
-			ApplicationController.Instance.ReloadAll(null, null);
-		}
 	}
 
-	internal class NotificationWidget : GuiWidget
+	public class UpdateNotificationMark : GuiWidget
 	{
-		public NotificationWidget()
+		public UpdateNotificationMark()
 			: base(12, 12)
 		{
 		}

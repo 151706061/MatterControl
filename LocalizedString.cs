@@ -27,8 +27,7 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
-//﻿#define DEBUG_SHOW_TRANSLATED_STRINGS
-
+using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.MatterControl;
 
 namespace MatterHackers.Localizations
@@ -37,29 +36,32 @@ namespace MatterHackers.Localizations
 	{
 		private static TranslationMap MatterControlTranslationMap;
 
+		private static readonly object syncRoot = new object();
+
+		static LocalizedString()
+		{
+			lock(syncRoot)
+			{
+				if (MatterControlTranslationMap == null)
+				{
+#if DEBUG && !__ANDROID__
+					// In debug builds we load a translation map capable of generating/updating master.txt
+					MatterControlTranslationMap = new AutoGeneratingTranslationMap("Translations", UserSettings.Instance.Language);
+#else
+					MatterControlTranslationMap = new TranslationMap("Translations", UserSettings.Instance.Language);
+#endif
+				}
+			}
+		}
+
 		public static string Get(string englishText)
 		{
-			string language = UserSettings.Instance.get("Language");
-			if (language == null)
-			{
-				language = "en";
-				UserSettings.Instance.set("Language", "en");
-			}
-
-			if (MatterControlTranslationMap == null)
-			{
-				string pathToTranslationsFolder = "Translations";
-				MatterControlTranslationMap = new TranslationMap(pathToTranslationsFolder, language);
-			}
-#if DEBUG_SHOW_TRANSLATED_STRINGS && DEBUG
-            return "El " + englishText + " o";
-#endif
 			return MatterControlTranslationMap.Translate(englishText);
 		}
 
 		public static void ResetTranslationMap()
 		{
-			MatterControlTranslationMap = null;
+			MatterControlTranslationMap = new TranslationMap("Translations", UserSettings.Instance.Language);
 		}
 
 		public static string Localize(this string englishString)

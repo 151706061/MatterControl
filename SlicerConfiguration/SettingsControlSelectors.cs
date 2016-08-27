@@ -1,5 +1,5 @@
 ﻿/*
-Copyright (c) 2014, Kevin Pope
+Copyright (c) 2016, Kevin Pope, John Lewin
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -29,93 +29,133 @@ either expressed or implied, of the FreeBSD Project.
 //#define DO_IN_PLACE_EDIT
 
 using MatterHackers.Agg;
+using MatterHackers.Agg.Image;
+using MatterHackers.Agg.ImageProcessing;
+using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
+using MatterHackers.ImageProcessing;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.CustomWidgets;
+using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 namespace MatterHackers.MatterControl.SlicerConfiguration
 {
-	public class SliceSelectorWidget : FlowLayoutWidget
+	public class PresetSelectorWidget : FlowLayoutWidget
 	{
+		private string defaultMenuItemText = "- default -".Localize();
 		private Button editButton;
-		private ImageButtonFactory imageButtonFactory = new ImageButtonFactory();
+		private NamedSettingsLayers layerType;
+		GuiWidget pullDownContainer;
 
-		private string filterTag;
-		private string filterLabel;
-		public AnchoredDropDownList DropDownList;
-		private TupleList<string, Func<bool>> DropDownMenuItems = new TupleList<string, Func<bool>>();
-		private int presetIndex; //For multiple materials
+		private int extruderIndex; //For multiple materials
 
-		public SliceSelectorWidget(string label, RGBA_Bytes accentColor, string tag = null, int presetIndex = 1)
+		public PresetSelectorWidget(string label, RGBA_Bytes accentColor, NamedSettingsLayers layerType, int extruderIndex)
 			: base(FlowDirection.TopToBottom)
 		{
-			this.presetIndex = presetIndex;
-			this.filterLabel = label;
-			if (tag == null)
+			SliceSettingsWidget.SettingChanged.RegisterEvent((s, e) =>
 			{
-				this.filterTag = label.ToLower();
-			}
-			else
-			{
-				this.filterTag = tag;
-			}
+				StringEventArgs stringEvent = e as StringEventArgs;
+				if (stringEvent != null
+				&& stringEvent.Data == SettingsKey.layer_name)
+				{
+					RebuildDropDownList();
+				}
+			}, ref unregisterEvents);
 
+			this.extruderIndex = extruderIndex;
+			this.layerType = layerType;
+			
 			this.HAnchor = HAnchor.ParentLeftRight;
-			this.VAnchor = Agg.UI.VAnchor.ParentBottomTop;
+			this.VAnchor = Agg.UI.VAnchor.Max_FitToChildren_ParentHeight;
 			this.BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
-			GuiWidget accentBar = new GuiWidget(1, 5);
-			accentBar.BackgroundColor = accentColor;
-			accentBar.HAnchor = HAnchor.ParentLeftRight;
+			GuiWidget accentBar = new GuiWidget(7, 5)
+			{
+				BackgroundColor = accentColor,
+				HAnchor = HAnchor.ParentLeftRight
+			};
 
-			TextWidget labelText = new TextWidget(LocalizedString.Get(label).ToUpper());
-			labelText.TextColor = ActiveTheme.Instance.PrimaryTextColor;
-			labelText.HAnchor = Agg.UI.HAnchor.ParentCenter;
-			labelText.Margin = new BorderDouble(0, 3, 0, 6);
+			TextWidget labelText = new TextWidget(label.Localize().ToUpper())
+			{
+				TextColor = ActiveTheme.Instance.PrimaryTextColor,
+				HAnchor = Agg.UI.HAnchor.ParentCenter,
+				Margin = new BorderDouble(0, 3, 0, 6)
+			};
 
 			this.AddChild(labelText);
-			this.AddChild(GetPulldownContainer());
+			pullDownContainer = new GuiWidget(HAnchor.ParentLeftRight, VAnchor.FitToChildren);
+			pullDownContainer.AddChild(GetPulldownContainer());
+			this.AddChild(pullDownContainer);
 			this.AddChild(new VerticalSpacer());
 			this.AddChild(accentBar);
 		}
 
-		public virtual FlowLayoutWidget GetPulldownContainer()
+		public FlowLayoutWidget GetPulldownContainer()
 		{
-			DropDownList = CreateDropdown();
+			var dropDownList = CreateDropdown();
 
 			FlowLayoutWidget container = new FlowLayoutWidget();
 			container.HAnchor = HAnchor.ParentLeftRight;
 			container.Padding = new BorderDouble(6, 0);
 
-			editButton = imageButtonFactory.Generate("icon_edit_white.png", "icon_edit_gray.png");
+			editButton = TextImageButtonFactory.GetThemedEditButton();
 
+			editButton.ToolTipText = "Edit Selected Setting".Localize();
+			editButton.Enabled = dropDownList.SelectedIndex != -1;
 			editButton.VAnchor = VAnchor.ParentCenter;
-			editButton.Margin = new BorderDouble(right: 6);
+			editButton.Margin = new BorderDouble(left: 6);
 			editButton.Click += (sender, e) =>
 			{
-#if DO_IN_PLACE_EDIT
-                if (filterTag == "quality")
-                {
-                    SliceSettingsWidget.SettingsIndexBeingEdited = 2;
-                }
-                else
-                {
-                    SliceSettingsWidget.SettingsIndexBeingEdited = 3;
-                }
-                // If there is a setting selected then reload the silce setting widget with the presetIndex to edit.
-                ApplicationController.Instance.ReloadAdvancedControlsPanel();
-                // If no setting selected then call onNewItemSelect(object sender, EventArgs e)
-#else
-				if (filterTag == "material")
+				if (layerType == NamedSettingsLayers.Material)
 				{
 					if (ApplicationController.Instance.EditMaterialPresetsWindow == null)
 					{
-						ApplicationController.Instance.EditMaterialPresetsWindow = new SlicePresetsWindow(ReloadOptions, filterLabel, filterTag);
-						ApplicationController.Instance.EditMaterialPresetsWindow.Closed += (popupWindowSender, popupWindowSenderE) => { ApplicationController.Instance.EditMaterialPresetsWindow = null; };
+						string presetsID = ActiveSliceSettings.Instance.GetMaterialPresetKey(extruderIndex);
+						if (string.IsNullOrEmpty(presetsID))
+						{
+							return;
+						}
+
+						var layerToEdit = ActiveSliceSettings.Instance.MaterialLayers.Where(layer => layer.LayerID == presetsID).FirstOrDefault();
+
+						var presetsContext = new PresetsContext(ActiveSliceSettings.Instance.MaterialLayers, layerToEdit)
+						{
+							LayerType = NamedSettingsLayers.Material,
+							SetAsActive = (materialKey) =>
+							{
+								ActiveSliceSettings.Instance.SetMaterialPreset(this.extruderIndex, materialKey);
+							},
+							DeleteLayer = () => 
+							{
+								var materialKeys = ActiveSliceSettings.Instance.MaterialSettingsKeys;
+								for (var i = 0; i < materialKeys.Count; i++)
+								{
+									if (materialKeys[i] == presetsID)
+									{
+										materialKeys[i] = "";
+									}
+								}
+
+								ActiveSliceSettings.Instance.SetMaterialPreset(extruderIndex, "");
+								ActiveSliceSettings.Instance.MaterialLayers.Remove(layerToEdit);
+								ActiveSliceSettings.Instance.Save();
+
+								UiThread.RunOnIdle(() => ApplicationController.Instance.ReloadAdvancedControlsPanel());
+							}
+						};
+
+						ApplicationController.Instance.EditMaterialPresetsWindow = new SlicePresetsWindow(presetsContext);
+						ApplicationController.Instance.EditMaterialPresetsWindow.Closed += (s, e2) => 
+						{
+							ApplicationController.Instance.EditMaterialPresetsWindow = null;
+							ApplicationController.Instance.ReloadAdvancedControlsPanel();
+						};
+						ApplicationController.Instance.EditMaterialPresetsWindow.ShowAsSystemWindow();
 					}
 					else
 					{
@@ -123,158 +163,187 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 					}
 				}
 
-				if (filterTag == "quality")
+				if (layerType == NamedSettingsLayers.Quality)
 				{
 					if (ApplicationController.Instance.EditQualityPresetsWindow == null)
 					{
-						ApplicationController.Instance.EditQualityPresetsWindow = new SlicePresetsWindow(ReloadOptions, filterLabel, filterTag);
-						ApplicationController.Instance.EditQualityPresetsWindow.Closed += (popupWindowSender, popupWindowSenderE) => { ApplicationController.Instance.EditQualityPresetsWindow = null; };
+						string presetsID = ActiveSliceSettings.Instance.ActiveQualityKey;
+						if (string.IsNullOrEmpty(presetsID))
+						{
+							return;
+						}
+
+						var layerToEdit = ActiveSliceSettings.Instance.QualityLayers.Where(layer => layer.LayerID == presetsID).FirstOrDefault();
+
+						var presetsContext = new PresetsContext(ActiveSliceSettings.Instance.QualityLayers, layerToEdit)
+						{
+							LayerType = NamedSettingsLayers.Quality,
+							SetAsActive = (qualityKey) => ActiveSliceSettings.Instance.ActiveQualityKey = qualityKey,
+							DeleteLayer = () =>
+							{
+								ActiveSliceSettings.Instance.ActiveQualityKey = "";
+								ActiveSliceSettings.Instance.QualityLayers.Remove(layerToEdit);
+								ActiveSliceSettings.Instance.Save();
+
+								UiThread.RunOnIdle(() => ApplicationController.Instance.ReloadAdvancedControlsPanel());
+							}
+						};
+
+						ApplicationController.Instance.EditQualityPresetsWindow = new SlicePresetsWindow(presetsContext);
+						ApplicationController.Instance.EditQualityPresetsWindow.Closed += (s, e2) => 
+						{
+							ApplicationController.Instance.EditQualityPresetsWindow = null;
+							ApplicationController.Instance.ReloadAdvancedControlsPanel();
+						};
+						ApplicationController.Instance.EditQualityPresetsWindow.ShowAsSystemWindow();
 					}
 					else
 					{
 						ApplicationController.Instance.EditQualityPresetsWindow.BringToFront();
 					}
 				}
-#endif
 			};
 
+			container.AddChild(dropDownList);
 			container.AddChild(editButton);
-			container.AddChild(DropDownList);
+
 			return container;
 		}
 
-		protected void ReloadOptions(object sender, EventArgs e)
+		private void RebuildDropDownList()
 		{
-			ApplicationController.Instance.ReloadAdvancedControlsPanel();
+			pullDownContainer.CloseAllChildren();
+			pullDownContainer.AddChild(GetPulldownContainer());
 		}
 
-		private IEnumerable<DataStorage.SliceSettingsCollection> GetCollections()
+		private void MenuItem_Selected(object sender, EventArgs e)
 		{
-			IEnumerable<DataStorage.SliceSettingsCollection> results = Enumerable.Empty<DataStorage.SliceSettingsCollection>();
-
-			//Retrieve a list of collections matching from the Datastore
-			if (ActivePrinterProfile.Instance.ActivePrinter != null)
-			{
-				string query = string.Format("SELECT * FROM SliceSettingsCollection WHERE Tag = '{0}' AND PrinterId = {1} ORDER BY Name;", filterTag, ActivePrinterProfile.Instance.ActivePrinter.Id);
-				results = (IEnumerable<DataStorage.SliceSettingsCollection>)DataStorage.Datastore.Instance.dbSQLite.Query<DataStorage.SliceSettingsCollection>(query);
-			}
-			return results;
-		}
-
-		private void onItemSelect(object sender, EventArgs e)
-		{
+			var activeSettings = ActiveSliceSettings.Instance;
 			MenuItem item = (MenuItem)sender;
-			if (filterTag == "material")
+
+			if (layerType == NamedSettingsLayers.Material)
 			{
-				if (ActivePrinterProfile.Instance.GetMaterialSetting(presetIndex) != Int32.Parse(item.Value))
+				if (activeSettings.GetMaterialPresetKey(extruderIndex) != item.Value)
 				{
-					ActivePrinterProfile.Instance.SetMaterialSetting(presetIndex, Int32.Parse(item.Value));
+					activeSettings.SetMaterialPreset(extruderIndex, item.Value);
 				}
 			}
-			else if (filterTag == "quality")
+			else if (layerType == NamedSettingsLayers.Quality)
 			{
-				if (ActivePrinterProfile.Instance.ActiveQualitySettingsID != Int32.Parse(item.Value))
+				if (activeSettings.ActiveQualityKey != item.Value)
 				{
-					ActivePrinterProfile.Instance.ActiveQualitySettingsID = Int32.Parse(item.Value);
+					activeSettings.ActiveQualityKey = item.Value;
 				}
 			}
-			UiThread.RunOnIdle((state) =>
+
+			UiThread.RunOnIdle(() =>
 			{
-				ActiveSliceSettings.Instance.LoadAllSettings();
 				ApplicationController.Instance.ReloadAdvancedControlsPanel();
 			});
+
+			editButton.Enabled = item.Text != defaultMenuItemText;
 		}
 
-		private void onNewItemSelect(object sender, EventArgs e)
+		private DropDownList CreateDropdown()
 		{
-#if DO_IN_PLACE_EDIT
-            // pop up a dialog to request a new setting name
-            // after getting the new name select it and relead the slice setting widget editing the new setting
-            throw new NotImplementedException();
-#else
-			UiThread.RunOnIdle((state) =>
+			var dropDownList = new DropDownList(defaultMenuItemText, maxHeight: 300, useLeftIcons: true)
 			{
-				ActiveSliceSettings.Instance.LoadAllSettings();
-				ApplicationController.Instance.ReloadAdvancedControlsPanel();
-				if (filterTag == "material")
-				{
-					if (ApplicationController.Instance.EditMaterialPresetsWindow == null)
-					{
-						ApplicationController.Instance.EditMaterialPresetsWindow = new SlicePresetsWindow(ReloadOptions, filterLabel, filterTag, false, 0);
-						ApplicationController.Instance.EditMaterialPresetsWindow.Closed += (popupWindowSender, popupWindowSenderE) => { ApplicationController.Instance.EditMaterialPresetsWindow = null; };
-					}
-					else
-					{
-						ApplicationController.Instance.EditMaterialPresetsWindow.ChangeToSlicePresetFromID(0);
-						ApplicationController.Instance.EditMaterialPresetsWindow.BringToFront();
-					}
-				}
-				if (filterTag == "quality")
-				{
-					if (ApplicationController.Instance.EditQualityPresetsWindow == null)
-					{
-						ApplicationController.Instance.EditQualityPresetsWindow = new SlicePresetsWindow(ReloadOptions, filterLabel, filterTag, false, 0);
-						ApplicationController.Instance.EditQualityPresetsWindow.Closed += (popupWindowSender, popupWindowSenderE) => { ApplicationController.Instance.EditQualityPresetsWindow = null; };
-					}
-					else
-					{
-						ApplicationController.Instance.EditQualityPresetsWindow.ChangeToSlicePresetFromID(0);
-						ApplicationController.Instance.EditQualityPresetsWindow.BringToFront();
-					}
-				}
-			});
-#endif
-		}
+				HAnchor = HAnchor.ParentLeftRight,
+				MenuItemsPadding = new BorderDouble(10, 4, 10, 6),
+			};
 
-		private AnchoredDropDownList CreateDropdown()
-		{
-			AnchoredDropDownList dropDownList = new AnchoredDropDownList("- default -", maxHeight: 300);
 			dropDownList.Margin = new BorderDouble(0, 3);
 			dropDownList.MinimumSize = new Vector2(dropDownList.LocalBounds.Width, dropDownList.LocalBounds.Height);
-			MenuItem defaultMenuItem = dropDownList.AddItem("- default -", "0");
-			defaultMenuItem.Selected += new EventHandler(onItemSelect);
 
-			IEnumerable<DataStorage.SliceSettingsCollection> collections = GetCollections();
-			foreach (DataStorage.SliceSettingsCollection collection in collections)
+			MenuItem defaultMenuItem = dropDownList.AddItem(defaultMenuItemText, "");
+			defaultMenuItem.Selected += MenuItem_Selected;
+
+			var listSource = (layerType == NamedSettingsLayers.Material) ? ActiveSliceSettings.Instance.MaterialLayers : ActiveSliceSettings.Instance.QualityLayers;
+			foreach (var layer in listSource)
 			{
-				MenuItem menuItem = dropDownList.AddItem(collection.Name, collection.Id.ToString());
-				menuItem.Selected += new EventHandler(onItemSelect);
+				MenuItem menuItem = dropDownList.AddItem(layer.Name, layer.LayerID);
+				menuItem.Selected += MenuItem_Selected;
 			}
 
-			MenuItem addNewPreset = dropDownList.AddItem("<< Add >>", "new");
-			addNewPreset.Selected += new EventHandler(onNewItemSelect);
-
-			if (filterTag == "material")
+			MenuItem addNewPreset = dropDownList.AddItem(StaticData.Instance.LoadIcon("icon_plus.png", 32, 32), "Add New Setting...", "new");
+			addNewPreset.Selected += (s, e) =>
 			{
-				try
+				var newLayer = new PrinterSettingsLayer();
+				if (layerType == NamedSettingsLayers.Quality)
 				{
-					dropDownList.SelectedValue = ActivePrinterProfile.Instance.GetMaterialSetting(presetIndex).ToString();
+					newLayer.Name = "Quality" + ActiveSliceSettings.Instance.QualityLayers.Count;
+					ActiveSliceSettings.Instance.QualityLayers.Add(newLayer);
+					ActiveSliceSettings.Instance.ActiveQualityKey = newLayer.LayerID;
 				}
-				catch
+				else
 				{
-					//Unable to set selected value
+					newLayer.Name = "Material" + ActiveSliceSettings.Instance.MaterialLayers.Count;
+					ActiveSliceSettings.Instance.MaterialLayers.Add(newLayer);
+					ActiveSliceSettings.Instance.SetMaterialPreset(this.extruderIndex, newLayer.LayerID);
+				}
+
+				RebuildDropDownList();
+
+				editButton.ClickButton(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+			};
+
+			try
+			{
+				string settingsKey;
+
+				if (layerType == NamedSettingsLayers.Material)
+				{
+					settingsKey = ActiveSliceSettings.Instance.GetMaterialPresetKey(extruderIndex);
+
+					ActiveSliceSettings.Instance.MaterialLayers.CollectionChanged += SettingsLayers_CollectionChanged;
+					dropDownList.Closed += (s1, e1) =>
+					{
+						ActiveSliceSettings.Instance.MaterialLayers.CollectionChanged -= SettingsLayers_CollectionChanged;
+					};
+				}
+				else
+				{
+					settingsKey = ActiveSliceSettings.Instance.ActiveQualityKey;
+
+					ActiveSliceSettings.Instance.QualityLayers.CollectionChanged += SettingsLayers_CollectionChanged;
+					dropDownList.Closed += (s1, e1) =>
+					{
+						ActiveSliceSettings.Instance.QualityLayers.CollectionChanged -= SettingsLayers_CollectionChanged;
+					};
+				}
+
+				if (!string.IsNullOrEmpty(settingsKey))
+				{
+					dropDownList.SelectedValue = settingsKey;
 				}
 			}
-			else if (filterTag == "quality")
+			catch (Exception ex)
 			{
-				try
-				{
-					dropDownList.SelectedValue = ActivePrinterProfile.Instance.ActiveQualitySettingsID.ToString();
-				}
-				catch
-				{
-					//Unable to set selected value
-				}
+				GuiWidget.BreakInDebugger(ex.Message);
 			}
-
+		
 			return dropDownList;
+		}
+
+		private event EventHandler unregisterEvents;
+
+		public override void OnClosed(EventArgs e)
+		{
+			if (unregisterEvents != null)
+			{
+				unregisterEvents(this, null);
+			}
+			base.OnClosed(e);
+		}
+
+		private void SettingsLayers_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+		{
+			RebuildDropDownList();
 		}
 	}
 
-	public class SliceEngineSelector : StyledDropDownList
+	public class SliceEngineSelector : DropDownList
 	{
-		private TupleList<string, Func<bool>> engineOptionsMenuItems = new TupleList<string, Func<bool>>();
-
 		public SliceEngineSelector(string label)
 			: base(label)
 		{
@@ -284,7 +353,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 			foreach (SliceEngineInfo engineMenuItem in SlicingQueue.AvailableSliceEngines)
 			{
 				bool engineAllowed = true;
-				if (ActiveSliceSettings.Instance.ExtruderCount > 1 && engineMenuItem.Name != "MatterSlice")
+				if (ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count) > 1 && engineMenuItem.Name != "MatterSlice")
 				{
 					engineAllowed = false;
 				}
@@ -292,34 +361,35 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 				if (engineAllowed)
 				{
 					MenuItem item = AddItem(engineMenuItem.Name);
-					ActivePrinterProfile.SlicingEngineTypes itemEngineType = engineMenuItem.GetSliceEngineType();
+					SlicingEngineTypes itemEngineType = engineMenuItem.GetSliceEngineType();
 					item.Selected += (sender, e) =>
 					{
-						if (ActivePrinterProfile.Instance.ActiveSliceEngineType != itemEngineType)
+						if (ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType() != itemEngineType)
 						{
-							ActivePrinterProfile.Instance.ActiveSliceEngineType = itemEngineType;
+							ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType(itemEngineType);
 							ApplicationController.Instance.ReloadAdvancedControlsPanel();
 						}
 					};
 
 					//Set item as selected if it matches the active slice engine
-					if (engineMenuItem.GetSliceEngineType() == ActivePrinterProfile.Instance.ActiveSliceEngineType)
+					if (engineMenuItem.GetSliceEngineType() == ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType())
 					{
 						SelectedLabel = engineMenuItem.Name;
 					}
 				}
 			}
 
-			//If nothing is selected (ie selected engine is not available) set to
+			//If nothing is selected (i.e. selected engine is not available) set to
 			if (SelectedLabel == "")
 			{
 				try
 				{
 					SelectedLabel = MatterSliceInfo.DisplayName;
 				}
-				catch
+				catch (Exception ex)
 				{
-					throw new Exception("MatterSlice is not available, for some strange reason");
+					GuiWidget.BreakInDebugger(ex.Message);
+					throw new Exception("Unable to find MatterSlice executable");
 				}
 			}
 

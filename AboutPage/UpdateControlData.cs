@@ -31,6 +31,10 @@ using MatterHackers.Agg;
 using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+#if !__ANDROID__
+using MatterHackers.MatterControl.AboutPage;
+#endif
+using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.MatterControl.SettingsManagement;
 using MatterHackers.MatterControl.VersionManagement;
 using System;
@@ -55,7 +59,7 @@ namespace MatterHackers.MatterControl
 
 		private UpdateRequestType updateRequestType;
 
-		public enum UpdateStatusStates { MayBeAvailable, CheckingForUpdate, UpdateAvailable, UpdateDownloading, ReadyToInstall, UpToDate, UnableToConnectToServer };
+		public enum UpdateStatusStates { MayBeAvailable, CheckingForUpdate, UpdateAvailable, UpdateDownloading, ReadyToInstall, UpToDate, UnableToConnectToServer, UpdateRequired };
 
 		private bool WaitingToCompleteTransaction()
 		{
@@ -73,9 +77,9 @@ namespace MatterHackers.MatterControl
 		public RootedObjectEventHandler UpdateStatusChanged = new RootedObjectEventHandler();
 
 #if __ANDROID__
-		static string updateFileLocation = Path.Combine(DataStorage.ApplicationDataStorage.Instance.PublicDataStoragePath, "updates");
+		static string updateFileLocation = Path.Combine(ApplicationDataStorage.Instance.PublicDataStoragePath, "updates");
 #else
-		private static string applicationDataPath = DataStorage.ApplicationDataStorage.Instance.ApplicationUserDataPath;
+		private static string applicationDataPath = ApplicationDataStorage.ApplicationUserDataPath;
 		private static string updateFileLocation = Path.Combine(applicationDataPath, "updates");
 #endif
 
@@ -91,7 +95,7 @@ namespace MatterHackers.MatterControl
 
 		private void CheckVersionStatus()
 		{
-			string currentBuildToken = ApplicationSettings.Instance.get("CurrentBuildToken");
+			string currentBuildToken = ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentBuildToken);
 			string updateFileName = Path.Combine(updateFileLocation, string.Format("{0}.{1}", currentBuildToken, InstallerExtension));
 
 			string applicationBuildToken = VersionInfo.Instance.BuildToken;
@@ -110,12 +114,21 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
+		static bool haveShowUpdateRequired = false;
 		private void SetUpdateStatus(UpdateStatusStates updateStatus)
 		{
 			if (this.updateStatus != updateStatus)
 			{
 				this.updateStatus = updateStatus;
 				OnUpdateStatusChanged(null);
+
+				if (this.UpdateRequired && !haveShowUpdateRequired)
+				{
+					haveShowUpdateRequired = true;
+#if !__ANDROID__
+					UiThread.RunOnIdle(CheckForUpdateWindow.Show);
+#endif
+				}
 			}
 		}
 
@@ -129,7 +142,7 @@ namespace MatterHackers.MatterControl
 				}
 				else if (OsInformation.OperatingSystem == OSType.X11)
 				{
-					return "deb";
+					return "tar.gz";
 				}
 				else if (OsInformation.OperatingSystem == OSType.Android)
 				{
@@ -157,6 +170,16 @@ namespace MatterHackers.MatterControl
 			}
 		}
 
+		public bool UpdateRequired
+		{
+			get
+			{
+				return updateStatus == UpdateStatusStates.UpdateAvailable && ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.UpdateRequired) == "True";
+			}
+
+			private set {}
+		}
+
 		public void CheckForUpdateUserRequested()
 		{
 			updateRequestType = UpdateRequestType.UserRequested;
@@ -168,21 +191,21 @@ namespace MatterHackers.MatterControl
 			if (!WaitingToCompleteTransaction())
 			{
 				SetUpdateStatus(UpdateStatusStates.CheckingForUpdate);
-				RequestLatestVersion request = new RequestLatestVersion();
+				LatestVersionRequest request = new LatestVersionRequest();
 				request.RequestSucceeded += new EventHandler(onVersionRequestSucceeded);
-				request.RequestFailed += new EventHandler(onVersionRequestFailed);
+				request.RequestFailed += onVersionRequestFailed;
 				request.Request();
 			}
 		}
 
-		private string updateAvailableMessage = "There is a recommended update avalible for MatterControl. Would you like to download it now?".Localize();
-		private string updateAvailableTitle = "Recommended Update Available".Localize();
-		private string downloadNow = "Download Now".Localize();
-		private string remindMeLater = "Remind Me Later".Localize();
+		private static string updateAvailableMessage = "There is a recommended update available for MatterControl. Would you like to download it now?".Localize();
+		private static string updateAvailableTitle = "Recommended Update Available".Localize();
+		private static string downloadNow = "Download Now".Localize();
+		private static string remindMeLater = "Remind Me Later".Localize();
 
 		private void onVersionRequestSucceeded(object sender, EventArgs e)
 		{
-			string currentBuildToken = ApplicationSettings.Instance.get("CurrentBuildToken");
+			string currentBuildToken = ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentBuildToken);
 			string updateFileName = Path.Combine(updateFileLocation, string.Format("{0}.{1}", currentBuildToken, InstallerExtension));
 
 			string applicationBuildToken = VersionInfo.Instance.BuildToken;
@@ -200,7 +223,7 @@ namespace MatterHackers.MatterControl
 				SetUpdateStatus(UpdateStatusStates.UpdateAvailable);
 				if (updateRequestType == UpdateRequestType.FirstTimeEver)
 				{
-					UiThread.RunOnIdle((state) =>
+					UiThread.RunOnIdle(() =>
 					{
 						StyledMessageBox.ShowMessageBox(ProcessDialogResponse, updateAvailableMessage, updateAvailableTitle, StyledMessageBox.MessageType.YES_NO, downloadNow, remindMeLater);
 						// show a dialog to tell the user there is an update
@@ -243,7 +266,7 @@ namespace MatterHackers.MatterControl
 			return null;
 		}
 
-		private void onVersionRequestFailed(object sender, EventArgs e)
+		private void onVersionRequestFailed(object sender, ResponseErrorEventArgs e)
 		{
 			SetUpdateStatus(UpdateStatusStates.UpToDate);
 		}
@@ -266,7 +289,7 @@ namespace MatterHackers.MatterControl
 		{
 			if (!WaitingToCompleteTransaction())
 			{
-				string downloadToken = ApplicationSettings.Instance.get("CurrentBuildToken");
+				string downloadToken = ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentBuildToken);
 
 				if (downloadToken == null)
 				{
@@ -279,7 +302,7 @@ namespace MatterHackers.MatterControl
 				{
 					downloadAttempts++;
 					SetUpdateStatus(UpdateStatusStates.UpdateDownloading);
-					string downloadUri = string.Format("https://mattercontrol.appspot.com/downloads/development/{0}", ApplicationSettings.Instance.get("CurrentBuildToken"));
+					string downloadUri = $"{MatterControlApplication.MCWSBaseUri}/downloads/development/{ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentBuildToken)}";
 
 					//Make HEAD request to determine the size of the download (required by GAE)
 					System.Net.WebRequest request = System.Net.WebRequest.Create(downloadUri);
@@ -292,6 +315,7 @@ namespace MatterHackers.MatterControl
 					}
 					catch
 					{
+						GuiWidget.BreakInDebugger();
 						//Unknown download size
 						downloadSize = 0;
 					}
@@ -317,10 +341,7 @@ namespace MatterHackers.MatterControl
 			{
 				this.downloadPercent = (int)(e.BytesReceived * 100 / downloadSize);
 			}
-			UiThread.RunOnIdle((state) =>
-			{
-				UpdateStatusChanged.CallEvents(this, e);
-			});
+			UiThread.RunOnIdle(() => UpdateStatusChanged.CallEvents(this, e) );
 		}
 
 		private void DownloadCompleted(object sender, AsyncCompletedEventArgs e)
@@ -340,18 +361,12 @@ namespace MatterHackers.MatterControl
 				}
 				else
 				{
-					UiThread.RunOnIdle((state) =>
-					{
-						SetUpdateStatus(UpdateStatusStates.UnableToConnectToServer);
-					});
+					UiThread.RunOnIdle(() => SetUpdateStatus(UpdateStatusStates.UnableToConnectToServer));
 				}
 			}
 			else
 			{
-				UiThread.RunOnIdle((state) =>
-				{
-					SetUpdateStatus(UpdateStatusStates.ReadyToInstall);
-				});
+				UiThread.RunOnIdle(() => SetUpdateStatus(UpdateStatusStates.ReadyToInstall));
 			}
 
 			webClient.Dispose();
@@ -360,10 +375,10 @@ namespace MatterHackers.MatterControl
 		private UpdateControlData()
 		{
 			CheckVersionStatus();
-			if (ApplicationSettings.Instance.get("ClientToken") != null
+			if (ApplicationSettings.Instance.GetClientToken() != null
 				|| OemSettings.Instance.CheckForUpdatesOnFirstRun)
 			{
-				if (ApplicationSettings.Instance.get("ClientToken") == null)
+				if (ApplicationSettings.Instance.GetClientToken() == null)
 				{
 					updateRequestType = UpdateRequestType.FirstTimeEver;
 				}
@@ -376,8 +391,8 @@ namespace MatterHackers.MatterControl
 			}
 			else
 			{
-				DataStorage.ApplicationSession firstSession;
-				firstSession = DataStorage.Datastore.Instance.dbSQLite.Table<DataStorage.ApplicationSession>().OrderBy(v => v.SessionStart).Take(1).FirstOrDefault();
+				ApplicationSession firstSession;
+				firstSession = Datastore.Instance.dbSQLite.Table<ApplicationSession>().OrderBy(v => v.SessionStart).Take(1).FirstOrDefault();
 				if (firstSession != null
 					&& DateTime.Compare(firstSession.SessionStart.AddDays(7), DateTime.Now) < 0)
 				{
@@ -393,15 +408,15 @@ namespace MatterHackers.MatterControl
 
 		public static EventHandler InstallUpdateFromMainActivity = null;
 
-		public bool InstallUpdate(GuiWidget windowToClose)
+		public bool InstallUpdate()
 		{
-			string downloadToken = ApplicationSettings.Instance.get("CurrentBuildToken");
+			string downloadToken = ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentBuildToken);
 
 			string updateFileName = Path.Combine(updateFileLocation, "{0}.{1}".FormatWith(downloadToken, InstallerExtension));
 #if __ANDROID__
 			string friendlyFileName = Path.Combine(updateFileLocation, "MatterControlSetup.apk");
 #else
-			string releaseVersion = ApplicationSettings.Instance.get("CurrentReleaseVersion");
+			string releaseVersion = ApplicationSettings.Instance.get(LatestVersionRequest.VersionKey.CurrentReleaseVersion);
 			string friendlyFileName = Path.Combine(updateFileLocation, "MatterControlSetup-{0}.{1}".FormatWith(releaseVersion, InstallerExtension));
 #endif
 
@@ -432,13 +447,8 @@ namespace MatterHackers.MatterControl
 				installUpdate.StartInfo.FileName = friendlyFileName;
 				installUpdate.Start();
 
-				while (windowToClose != null && windowToClose as SystemWindow == null)
-				{
-					windowToClose = windowToClose.Parent;
-				}
-
 				//Attempt to close current application
-				SystemWindow topSystemWindow = windowToClose as SystemWindow;
+				SystemWindow topSystemWindow = MatterControlApplication.Instance as SystemWindow;
 				if (topSystemWindow != null)
 				{
 					topSystemWindow.CloseOnIdle();
@@ -448,6 +458,7 @@ namespace MatterHackers.MatterControl
 			}
 			catch
 			{
+				GuiWidget.BreakInDebugger();
 				if (System.IO.File.Exists(friendlyFileName))
 				{
 					System.IO.File.Delete(friendlyFileName);

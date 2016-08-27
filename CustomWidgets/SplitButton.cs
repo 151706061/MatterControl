@@ -35,7 +35,7 @@ namespace MatterHackers.MatterControl
 			AddChild(altChoices);
 		}
 
-		public void addItem(string name, Func<bool> clickFunction)
+		public void AddItem(string name, Func<bool> clickFunction)
 		{
 			altChoices.addItem(name, clickFunction);
 		}
@@ -54,7 +54,7 @@ namespace MatterHackers.MatterControl
 		private Button CreateDefaultButton(string buttonText)
 		{
 			TextImageButtonFactory buttonFactory = new TextImageButtonFactory();
-			buttonFactory.FixedHeight = 30 * TextWidget.GlobalPointSizeScaleRatio;
+			buttonFactory.FixedHeight = 30 * GuiWidget.DeviceScale;
 			buttonFactory.normalFillColor = RGBA_Bytes.White;
 			buttonFactory.normalTextColor = RGBA_Bytes.Black;
 			buttonFactory.hoverTextColor = RGBA_Bytes.Black;

@@ -34,6 +34,7 @@ using MatterHackers.Agg.UI;
 using MatterHackers.Agg.VertexSource;
 using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.MatterControl.PartPreviewWindow;
+using MatterHackers.MatterControl.PrintLibrary;
 using MatterHackers.MatterControl.PrintQueue;
 using MatterHackers.PolygonMesh;
 using MatterHackers.PolygonMesh.Processors;
@@ -41,35 +42,32 @@ using MatterHackers.RayTracer;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
+using System.Threading.Tasks;
+using MatterHackers.Localizations;
+using MatterHackers.Agg.ImageProcessing;
 
 namespace MatterHackers.MatterControl
 {
 	public class PartThumbnailWidget : ClickWidget
 	{
-		const int tooBigAndroid = 50000000;
-		const int tooBigDesktop = 250000000;
-
-		const int renderOrthoAndroid = 20000000;
-		const int renderOrthoDesktop = 100000000;
-
+		object locker = new object();
 		// all the color stuff
 		new public double BorderWidth = 0;
 
 		public RGBA_Bytes FillColor = new RGBA_Bytes(255, 255, 255);
-
 		public RGBA_Bytes HoverBackgroundColor = new RGBA_Bytes(0, 0, 0, 50);
-
 		protected double borderRadius = 0;
 
 		//Don't delete this - required for OnDraw
 		protected RGBA_Bytes HoverBorderColor = new RGBA_Bytes();
 
-		private static BackgroundWorker createThumbnailWorker = null;
-
+		private const int renderOrthoAndroid = 20000000;
+		private const int renderOrthoDesktop = 100000000;
+		private const int tooBigAndroid = 50000000;
+		private const int tooBigDesktop = 250000000;
 		private static string partExtension = ".png";
-
+		private static bool processingThumbnail = false;
 		private ImageBuffer buildingThumbnailImage = new Agg.Image.ImageBuffer();
 
 		private RGBA_Bytes normalBackgroundColor = ActiveTheme.Instance.PrimaryAccentColor;
@@ -78,17 +76,16 @@ namespace MatterHackers.MatterControl
 
 		private PartPreviewMainWindow partPreviewWindow;
 
-		private PrintItemWrapper printItem;
+		private PrintItemWrapper printItemWrapper;
 
-		private bool thumbNailHasBeenRequested = false;
+		private bool thumbNailHasBeenCreated = false;
 
 		private ImageBuffer thumbnailImage = new Agg.Image.ImageBuffer();
 
 		public PartThumbnailWidget(PrintItemWrapper item, string noThumbnailFileName, string buildingThumbnailFileName, ImageSizes size)
 		{
-			this.PrintItem = item;
-
-			EnsureCorrectPartExtension();
+			ToolTipText = "Click to show in 3D View".Localize();
+			this.ItemWrapper = item;
 
 			// Set Display Attributes
 			this.Margin = new BorderDouble(0);
@@ -97,13 +94,13 @@ namespace MatterHackers.MatterControl
 			switch (size)
 			{
 				case ImageSizes.Size50x50:
-					this.Width = 50 * TextWidget.GlobalPointSizeScaleRatio;
-					this.Height = 50 * TextWidget.GlobalPointSizeScaleRatio;
+					this.Width = 50 * GuiWidget.DeviceScale;
+					this.Height = 50 * GuiWidget.DeviceScale;
 					break;
 
 				case ImageSizes.Size115x115:
-					this.Width = 115 * TextWidget.GlobalPointSizeScaleRatio;
-					this.Height = 115 * TextWidget.GlobalPointSizeScaleRatio;
+					this.Width = 115 * GuiWidget.DeviceScale;
+					this.Height = 115 * GuiWidget.DeviceScale;
 					break;
 
 				default:
@@ -113,21 +110,53 @@ namespace MatterHackers.MatterControl
 
 			this.BackgroundColor = normalBackgroundColor;
 			this.Cursor = Cursors.Hand;
+			this.ToolTipText = "Click to show in 3D View".Localize();
 
 			// set background images
 			if (noThumbnailImage.Width == 0)
 			{
 				StaticData.Instance.LoadIcon(noThumbnailFileName, noThumbnailImage);
+				noThumbnailImage.InvertLightness();
 				StaticData.Instance.LoadIcon(buildingThumbnailFileName, buildingThumbnailImage);
+				buildingThumbnailImage.InvertLightness();
 			}
 			this.thumbnailImage = new ImageBuffer(buildingThumbnailImage);
 
 			// Add Handlers
-			this.Click += new EventHandler(OnMouseClick);
-			this.MouseEnterBounds += new EventHandler(onEnter);
-			this.MouseLeaveBounds += new EventHandler(onExit);
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
+			this.Click += DoOnMouseClick;
+			this.MouseEnterBounds += onEnter;
+			this.MouseLeaveBounds += onExit;
+			ActiveTheme.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
 		}
+
+		private void DoOnMouseClick(object sender, EventArgs e)
+		{
+			UiThread.RunOnIdle(() =>
+			{
+				if (printItemWrapper != null)
+				{
+					string pathAndFile = printItemWrapper.FileLocation;
+					if (File.Exists(pathAndFile))
+					{
+						bool shiftKeyDown = Keyboard.IsKeyDown(Keys.ShiftKey);
+						if (shiftKeyDown)
+						{
+							OpenPartPreviewWindow(View3DWidget.AutoRotate.Disabled);
+						}
+						else
+						{
+							OpenPartPreviewWindow(View3DWidget.AutoRotate.Enabled);
+						}
+					}
+					else
+					{
+						QueueRowItem.ShowCantFindFileMessage(printItemWrapper);
+					}
+				}
+			});
+		}
+		
+		public event EventHandler<StringEventArgs> DoneRendering;
 
 		private event EventHandler unregisterEvents;
 
@@ -135,54 +164,39 @@ namespace MatterHackers.MatterControl
 
 		private enum RenderType { NONE, ORTHOGROPHIC, PERSPECTIVE, RAY_TRACE };
 
-		public PrintItemWrapper PrintItem
+		public PrintItemWrapper ItemWrapper
 		{
-			get { return printItem; }
+			get { return printItemWrapper; }
 			set
 			{
-				if (printItem != null)
+				if (ItemWrapper != null)
 				{
-					printItem.FileHasChanged.UnregisterEvent(item_FileHasChanged, ref unregisterEvents);
+					PrintItemWrapper.FileHasChanged.UnregisterEvent(item_FileHasChanged, ref unregisterEvents);
 				}
-				printItem = value;
-				thumbNailHasBeenRequested = false;
-				if (printItem != null)
+				
+				printItemWrapper = value;
+				
+				thumbNailHasBeenCreated = false;
+				if (ItemWrapper != null)
 				{
-					printItem.FileHasChanged.RegisterEvent(item_FileHasChanged, ref unregisterEvents);
+					PrintItemWrapper.FileHasChanged.RegisterEvent(item_FileHasChanged, ref unregisterEvents);
 				}
 			}
 		}
 
 		public ImageSizes Size { get; set; }
 
-		private Point2D bigRenderSize
+		static private Point2D BigRenderSize
 		{
 			get
 			{
-				switch (GetRenderType(printItem.FileLocation))
-				{
-					case RenderType.RAY_TRACE:
-						return new Point2D(115, 115);
-
-					case RenderType.PERSPECTIVE:
-					case RenderType.ORTHOGROPHIC:
-						return new Point2D(460, 460);
-
-					default:
-						return new Point2D(460, 460);
-				}
+				return new Point2D(460, 460);
 			}
 		}
 
-		public static void CleanUpCacheData()
+		public static string GetImageFileName(PrintItemWrapper item)
 		{
-			//string pngFileName = GetFilenameForSize(stlHashCode, ref size);
-			// delete everything that is a tga (we now save pngs).
-		}
-
-		public static string GetImageFilenameForItem(PrintItemWrapper item)
-		{
-			return GetFilenameForSize(item.FileHashCode.ToString(), new Point2D(460, 460));
+			return GetImageFileName(item.FileHashCode.ToString());
 		}
 
 		public override void OnClosed(EventArgs e)
@@ -191,21 +205,41 @@ namespace MatterHackers.MatterControl
 			{
 				unregisterEvents(this, null);
 			}
-			if (printItem != null)
-			{
-				printItem.FileHasChanged.UnregisterEvent(item_FileHasChanged, ref unregisterEvents);
-			}
+
 			base.OnClosed(e);
 		}
 
+		private void LoadOrCreateThumbnail()
+		{
+			lock(locker)
+			{
+				if (!thumbNailHasBeenCreated)
+				{
+					if (!processingThumbnail)
+					{
+						thumbNailHasBeenCreated = true;
+						processingThumbnail = true;
+						CreateThumbnail();
+						processingThumbnail = false;
+					}
+				}
+			}
+		}
+		
 		public override void OnDraw(Graphics2D graphics2D)
 		{
 			//Trigger thumbnail generation if neeeded
-			if (!thumbNailHasBeenRequested)
+			if (!thumbNailHasBeenCreated && !processingThumbnail)
 			{
-				BackgroundWorker tryLoad = new BackgroundWorker();
-				tryLoad.DoWork += new DoWorkEventHandler(TryLoad);
-				tryLoad.RunWorkerAsync(this);
+				if (SetImageFast())
+				{
+					thumbNailHasBeenCreated = true;
+					OnDoneRendering();
+				}
+				else
+				{
+					Task.Run(() => LoadOrCreateThumbnail());
+				}
 			}
 
 			if (this.FirstWidgetUnderMouse)
@@ -280,6 +314,9 @@ namespace MatterHackers.MatterControl
 					}
 				}
 
+				tempImage.SetRecieveBlender(new BlenderPreMultBGRA());
+				AllWhite.DoAllWhite(tempImage);
+
 				// and give it back
 				return tempImage;
 			}
@@ -292,28 +329,11 @@ namespace MatterHackers.MatterControl
 			thumbnailWidget.thumbnailImage = new ImageBuffer((int)Width, (int)Height, 32, new BlenderBGRA());
 		}
 
-		private static void EnsureCorrectPartExtension()
+		private static string GetImageFileName(string stlHashCode)
 		{
-			if (OsInformation.OperatingSystem == OSType.Mac
-				|| OsInformation.OperatingSystem == OSType.Android
-				|| OsInformation.OperatingSystem == OSType.X11)
-			{
-				partExtension = ".tga";
-			}
-		}
-
-		private static string GetFilenameForSize(string stlHashCode, Point2D size)
-		{
-			EnsureCorrectPartExtension();
-
 			string folderToSaveThumbnailsTo = ThumbnailPath();
-			string imageFileName = Path.Combine(folderToSaveThumbnailsTo, Path.ChangeExtension("{0}_{1}x{2}".FormatWith(stlHashCode, size.x, size.y), partExtension));
-			return imageFileName;
-		}
+			string imageFileName = Path.Combine(folderToSaveThumbnailsTo, Path.ChangeExtension("{0}_{1}x{2}".FormatWith(stlHashCode, BigRenderSize.x, BigRenderSize.y), partExtension));
 
-		private static string GetImageFileName(string stlHashCode, Point2D size)
-		{
-			string imageFileName = GetFilenameForSize(stlHashCode, size);
 			string folderToSavePrintsTo = Path.GetDirectoryName(imageFileName);
 
 			if (!Directory.Exists(folderToSavePrintsTo))
@@ -326,39 +346,52 @@ namespace MatterHackers.MatterControl
 
 		private static RenderType GetRenderType(string fileLocation)
 		{
-			return RenderType.ORTHOGROPHIC;
-
-			if (Is32Bit())
+			if (UserSettings.Instance.get("ThumbnailRenderingMode") == "raytraced")
 			{
-				long estimatedMemoryUse = 0;
-				if (File.Exists(fileLocation))
+				if (Is32Bit())
 				{
-					estimatedMemoryUse = MeshFileIo.GetEstimatedMemoryUse(fileLocation);
+					long estimatedMemoryUse = 0;
+					if (File.Exists(fileLocation))
+					{
+						estimatedMemoryUse = MeshFileIo.GetEstimatedMemoryUse(fileLocation);
 
-					if (OsInformation.OperatingSystem == OSType.Android)
-					{
-						if (estimatedMemoryUse > renderOrthoAndroid)
+						if (OsInformation.OperatingSystem == OSType.Android)
 						{
-							return RenderType.ORTHOGROPHIC;
+							if (estimatedMemoryUse > renderOrthoAndroid)
+							{
+								return RenderType.ORTHOGROPHIC;
+							}
 						}
-					}
-					else
-					{
-						if (estimatedMemoryUse > renderOrthoDesktop)
+						else
 						{
-							return RenderType.ORTHOGROPHIC;
+							if (estimatedMemoryUse > renderOrthoDesktop)
+							{
+								return RenderType.ORTHOGROPHIC;
+							}
 						}
 					}
 				}
+
+				return RenderType.RAY_TRACE;
 			}
 
-			return RenderType.RAY_TRACE;
+			return RenderType.ORTHOGROPHIC;
 		}
 
-		private static ImageBuffer LoadImageFromDisk(PartThumbnailWidget thumbnailWidget, string stlHashCode, Point2D size)
+		private static bool Is32Bit()
 		{
-			ImageBuffer tempImage = new ImageBuffer(size.x, size.y, 32, new BlenderBGRA());
-			string imageFileName = GetFilenameForSize(stlHashCode, size);
+			if (IntPtr.Size == 4)
+			{
+				return true;
+			}
+
+			return false;
+		}
+
+		private static ImageBuffer LoadImageFromDisk(PartThumbnailWidget thumbnailWidget, string stlHashCode)
+		{
+			ImageBuffer tempImage = new ImageBuffer(BigRenderSize.x, BigRenderSize.y, 32, new BlenderBGRA());
+			string imageFileName = GetImageFileName(stlHashCode);
 
 			if (File.Exists(imageFileName))
 			{
@@ -381,147 +414,117 @@ namespace MatterHackers.MatterControl
 			return null;
 		}
 
-		private static string ThumbnailPath()
+		public static string ThumbnailPath()
 		{
-			string applicationUserDataPath = ApplicationDataStorage.Instance.ApplicationUserDataPath;
+			string applicationUserDataPath = ApplicationDataStorage.ApplicationUserDataPath;
 			string folderToSaveThumbnailsTo = Path.Combine(applicationUserDataPath, "data", "temp", "thumbnails");
 			return folderToSaveThumbnailsTo;
 		}
 
-		private void createThumbnailWorker_DoWork(object sender, DoWorkEventArgs e)
+		private void CreateThumbnail()
 		{
-			PartThumbnailWidget thumbnailWidget = e.Argument as PartThumbnailWidget;
-			if (thumbnailWidget != null)
+			string stlHashCode = this.ItemWrapper.FileHashCode.ToString();
+
+			ImageBuffer bigRender = new ImageBuffer();
+			if (!File.Exists(this.ItemWrapper.FileLocation))
 			{
-				string stlHashCode = thumbnailWidget.PrintItem.FileHashCode.ToString();
+				return;
+			}
 
-				ImageBuffer bigRender = new ImageBuffer();
-				if (!File.Exists(thumbnailWidget.PrintItem.FileLocation))
-				{
-					return;
-				}
+			List<MeshGroup> loadedMeshGroups = MeshFileIo.Load(this.ItemWrapper.FileLocation);
 
-				List<MeshGroup> loadedMeshGroups = MeshFileIo.Load(thumbnailWidget.PrintItem.FileLocation);
+			RenderType renderType = GetRenderType(this.ItemWrapper.FileLocation);
 
-				RenderType renderType = GetRenderType(thumbnailWidget.PrintItem.FileLocation);
+			switch (renderType)
+			{
+				case RenderType.RAY_TRACE:
+					{
+						ThumbnailTracer tracer = new ThumbnailTracer(loadedMeshGroups, BigRenderSize.x, BigRenderSize.y);
+						tracer.DoTrace();
 
-				switch (renderType)
-				{
-					case RenderType.RAY_TRACE:
+						bigRender = tracer.destImage;
+					}
+					break;
+
+				case RenderType.PERSPECTIVE:
+					{
+						ThumbnailTracer tracer = new ThumbnailTracer(loadedMeshGroups, BigRenderSize.x, BigRenderSize.y);
+						this.thumbnailImage = new ImageBuffer(this.buildingThumbnailImage);
+						this.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
+
+						bigRender = new ImageBuffer(BigRenderSize.x, BigRenderSize.y, 32, new BlenderBGRA());
+
+						foreach (MeshGroup meshGroup in loadedMeshGroups)
 						{
-							ThumbnailTracer tracer = new ThumbnailTracer(loadedMeshGroups, bigRenderSize.x, bigRenderSize.y);
-							tracer.DoTrace();
-
-							bigRender = tracer.destImage;
-						}
-						break;
-
-					case RenderType.PERSPECTIVE:
-						{
-							ThumbnailTracer tracer = new ThumbnailTracer(loadedMeshGroups, bigRenderSize.x, bigRenderSize.y);
-							thumbnailWidget.thumbnailImage = new ImageBuffer(thumbnailWidget.buildingThumbnailImage);
-							thumbnailWidget.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
-
-							bigRender = new ImageBuffer(bigRenderSize.x, bigRenderSize.y, 32, new BlenderBGRA());
-
-							foreach (MeshGroup meshGroup in loadedMeshGroups)
+							double minZ = double.MaxValue;
+							double maxZ = double.MinValue;
+							foreach (Mesh loadedMesh in meshGroup.Meshes)
 							{
-								double minZ = double.MaxValue;
-								double maxZ = double.MinValue;
-								foreach (Mesh loadedMesh in meshGroup.Meshes)
-								{
-									tracer.GetMinMaxZ(loadedMesh, ref minZ, ref maxZ);
-								}
-
-								foreach (Mesh loadedMesh in meshGroup.Meshes)
-								{
-									tracer.DrawTo(bigRender.NewGraphics2D(), loadedMesh, RGBA_Bytes.White, minZ, maxZ);
-								}
+								tracer.GetMinMaxZ(loadedMesh, ref minZ, ref maxZ);
 							}
 
-							if (bigRender == null)
+							foreach (Mesh loadedMesh in meshGroup.Meshes)
 							{
-								bigRender = new ImageBuffer(thumbnailWidget.noThumbnailImage);
+								tracer.DrawTo(bigRender.NewGraphics2D(), loadedMesh, RGBA_Bytes.White, minZ, maxZ);
 							}
 						}
-						break;
 
-					case RenderType.NONE:
-					case RenderType.ORTHOGROPHIC:
-
-						thumbnailWidget.thumbnailImage = new ImageBuffer(thumbnailWidget.buildingThumbnailImage);
-						thumbnailWidget.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
-						bigRender = BuildImageFromMeshGroups(loadedMeshGroups, stlHashCode, bigRenderSize);
 						if (bigRender == null)
 						{
-							bigRender = new ImageBuffer(thumbnailWidget.noThumbnailImage);
+							bigRender = new ImageBuffer(this.noThumbnailImage);
 						}
-						break;
-				}
+					}
+					break;
 
-				// and save it to disk
-				string imageFileName = GetImageFileName(stlHashCode, bigRenderSize);
+				case RenderType.NONE:
+				case RenderType.ORTHOGROPHIC:
 
-				if (partExtension == ".png")
-				{
-					ImageIO.SaveImageData(imageFileName, bigRender);
-				}
-				else
-				{
-					ImageTgaIO.SaveImageData(imageFileName, bigRender);
-				}
-
-				ImageBuffer unScaledImage = new ImageBuffer(bigRender.Width, bigRender.Height, 32, new BlenderBGRA());
-				unScaledImage.NewGraphics2D().Render(bigRender, 0, 0);
-				// If the source image (the one we downloaded) is more than twice as big as our dest image.
-				while (unScaledImage.Width > Width * 2)
-				{
-					// The image sampler we use is a 2x2 filter so we need to scale by a max of 1/2 if we want to get good results.
-					// So we scale as many times as we need to to get the Image to be the right size.
-					// If this were going to be a non-uniform scale we could do the x and y separatly to get better results.
-					ImageBuffer halfImage = new ImageBuffer(unScaledImage.Width / 2, unScaledImage.Height / 2, 32, new BlenderBGRA());
-					halfImage.NewGraphics2D().Render(unScaledImage, 0, 0, 0, halfImage.Width / (double)unScaledImage.Width, halfImage.Height / (double)unScaledImage.Height);
-					unScaledImage = halfImage;
-				}
-
-				thumbnailWidget.thumbnailImage = new ImageBuffer((int)Width, (int)Height, 32, new BlenderBGRA());
-				thumbnailWidget.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
-				thumbnailWidget.thumbnailImage.NewGraphics2D().Render(unScaledImage, 0, 0, 0, (double)thumbnailWidget.thumbnailImage.Width / unScaledImage.Width, (double)thumbnailWidget.thumbnailImage.Height / unScaledImage.Height);
-
-				UiThread.RunOnIdle(thumbnailWidget.EnsureImageUpdated);
+					this.thumbnailImage = new ImageBuffer(this.buildingThumbnailImage);
+					this.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
+					bigRender = BuildImageFromMeshGroups(loadedMeshGroups, stlHashCode, BigRenderSize);
+					if (bigRender == null)
+					{
+						bigRender = new ImageBuffer(this.noThumbnailImage);
+					}
+					break;
 			}
-		}
 
-		private void createThumbnailWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-		{
-			createThumbnailWorker = null;
-		}
+			// and save it to disk
+			string imageFileName = GetImageFileName(stlHashCode);
 
-		private void DoOnMouseClick(object state)
-		{
-			if (printItem != null)
+			if (partExtension == ".png")
 			{
-				string pathAndFile = printItem.FileLocation;
-				if (File.Exists(pathAndFile))
+				ImageIO.SaveImageData(imageFileName, bigRender);
+			}
+			else
+			{
+				ImageTgaIO.SaveImageData(imageFileName, bigRender);
+			}
+
+			bigRender.SetRecieveBlender(new BlenderPreMultBGRA());
+
+			this.thumbnailImage = ImageBuffer.CreateScaledImage(bigRender, (int)Width, (int)Height);
+
+			UiThread.RunOnIdle(this.EnsureImageUpdated);
+
+			OnDoneRendering();
+		}
+
+		private void OnDoneRendering()
+		{
+			if (ItemWrapper != null)
+			{
+				string stlHashCode = this.ItemWrapper.FileHashCode.ToString();
+				string imageFileName = GetImageFileName(stlHashCode);
+
+				if (DoneRendering != null)
 				{
-					bool shiftKeyDown = Keyboard.IsKeyDown(Keys.ShiftKey);
-					if (shiftKeyDown)
-					{
-						OpenPartPreviewWindow(View3DWidget.AutoRotate.Disabled);
-					}
-					else
-					{
-						OpenPartPreviewWindow(View3DWidget.AutoRotate.Enabled);
-					}
-				}
-				else
-				{
-					QueueRowItem.ShowCantFindFileMessage(printItem);
+					DoneRendering(this, new StringEventArgs(imageFileName));
 				}
 			}
 		}
 
-		private void EnsureImageUpdated(object state)
+		private void EnsureImageUpdated()
 		{
 			thumbnailImage.MarkImageChanged();
 			Invalidate();
@@ -529,157 +532,13 @@ namespace MatterHackers.MatterControl
 
 		private void item_FileHasChanged(object sender, EventArgs e)
 		{
-			thumbNailHasBeenRequested = false;
-			Invalidate();
-		}
-		private void onEnter(object sender, EventArgs e)
-		{
-			HoverBorderColor = new RGBA_Bytes(255, 255, 255);
-			this.Invalidate();
-		}
-
-		private void onExit(object sender, EventArgs e)
-		{
-			HoverBorderColor = new RGBA_Bytes();
-			this.Invalidate();
-		}
-
-		private void OnMouseClick(object sender, EventArgs e)
-		{
-			UiThread.RunOnIdle(DoOnMouseClick);
-		}
-
-		private void OpenPartPreviewWindow(View3DWidget.AutoRotate autoRotate)
-		{
-			if (partPreviewWindow == null)
+			PrintItemWrapper senderItem = sender as PrintItemWrapper;
+			if (senderItem != null
+				&& senderItem.FileLocation == printItemWrapper.FileLocation)
 			{
-				partPreviewWindow = new PartPreviewMainWindow(this.PrintItem, autoRotate);
-				partPreviewWindow.Closed += new EventHandler(PartPreviewWindow_Closed);
+				thumbNailHasBeenCreated = false;
+				Invalidate();
 			}
-			else
-			{
-				partPreviewWindow.BringToFront();
-			}
-		}
-
-		private void PartPreviewWindow_Closed(object sender, EventArgs e)
-		{
-			this.partPreviewWindow = null;
-		}
-
-		private bool SetImageFast()
-		{
-			if (this.printItem == null)
-			{
-				this.thumbnailImage = new ImageBuffer(this.noThumbnailImage);
-				this.Invalidate();
-				return true;
-			}
-
-			if (this.PrintItem.FileLocation == QueueData.SdCardFileName)
-			{
-				switch (this.Size)
-				{
-					case ImageSizes.Size115x115:
-						{
-							StaticData.Instance.LoadIcon(Path.ChangeExtension("icon_sd_card_115x115", partExtension), this.thumbnailImage);
-						}
-						break;
-
-					case ImageSizes.Size50x50:
-						{
-							StaticData.Instance.LoadIcon(Path.ChangeExtension("icon_sd_card_50x50", partExtension), this.thumbnailImage);
-						}
-						break;
-
-					default:
-						throw new NotImplementedException();
-				}
-				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
-				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
-				Ellipse outline = new Ellipse(new Vector2(Width / 2.0, Height / 2.0), Width / 2 - Width / 12);
-				graphics.Render(new Stroke(outline, Width / 12), RGBA_Bytes.White);
-
-				UiThread.RunOnIdle(this.EnsureImageUpdated);
-				return true;
-			}
-			else if (Path.GetExtension(this.PrintItem.FileLocation).ToUpper() == ".GCODE")
-			{
-				CreateImage(this, Width, Height);
-				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
-				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
-				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
-				Ellipse outline = new Ellipse(center, Width / 2 - Width / 12);
-				graphics.Render(new Stroke(outline, Width / 12), RGBA_Bytes.White);
-				graphics.DrawString("GCode", center.x, center.y, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
-
-				UiThread.RunOnIdle(this.EnsureImageUpdated);
-				return true;
-			}
-			else if (!File.Exists(this.PrintItem.FileLocation))
-			{
-				CreateImage(this, Width, Height);
-				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
-				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
-				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
-				graphics.DrawString("Missing", center.x, center.y, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
-
-				UiThread.RunOnIdle(this.EnsureImageUpdated);
-				return true;
-			}
-			else if (MeshIsTooBigToLoad(this.PrintItem.FileLocation))
-			{
-				CreateImage(this, Width, Height);
-				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
-				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
-				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
-				double yOffset = 8 * Width / 50 * TextWidget.GlobalPointSizeScaleRatio * 1.5;
-				graphics.DrawString("Too Big\nto\nRender", center.x, center.y + yOffset, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
-
-				UiThread.RunOnIdle(this.EnsureImageUpdated);
-				return true;
-				//GetRenderType(thumbnailWidget.PrintItem.FileLocation);
-			}
-
-			string stlHashCode = this.PrintItem.FileHashCode.ToString();
-
-			ImageBuffer bigRender = LoadImageFromDisk(this, stlHashCode, bigRenderSize);
-			if (bigRender == null)
-			{
-				this.thumbnailImage = new ImageBuffer(buildingThumbnailImage);
-				return false;
-			}
-
-			ImageBuffer unScaledImage = new ImageBuffer(bigRender.Width, bigRender.Height, 32, new BlenderBGRA());
-			unScaledImage.NewGraphics2D().Render(bigRender, 0, 0);
-			// If the source image (the one we downloaded) is more than twice as big as our dest image.
-			while (unScaledImage.Width > Width * 2)
-			{
-				// The image sampler we use is a 2x2 filter so we need to scale by a max of 1/2 if we want to get good results.
-				// So we scale as many times as we need to to get the Image to be the right size.
-				// If this were going to be a non-uniform scale we could do the x and y separatly to get better results.
-				ImageBuffer halfImage = new ImageBuffer(unScaledImage.Width / 2, unScaledImage.Height / 2, 32, new BlenderBGRA());
-				halfImage.NewGraphics2D().Render(unScaledImage, 0, 0, 0, halfImage.Width / (double)unScaledImage.Width, halfImage.Height / (double)unScaledImage.Height);
-				unScaledImage = halfImage;
-			}
-
-			this.thumbnailImage = new ImageBuffer((int)Width, (int)Height, 32, new BlenderBGRA());
-			this.thumbnailImage.NewGraphics2D().Clear(new RGBA_Bytes(255, 255, 255, 0));
-			this.thumbnailImage.NewGraphics2D().Render(unScaledImage, 0, 0, 0, (double)this.thumbnailImage.Width / unScaledImage.Width, (double)this.thumbnailImage.Height / unScaledImage.Height);
-
-			UiThread.RunOnIdle(this.EnsureImageUpdated);
-
-			return true;
-		}
-
-		private static bool Is32Bit()
-		{
-			if (IntPtr.Size == 4)
-			{
-				return true;
-			}
-
-			return false;
 		}
 
 		private bool MeshIsTooBigToLoad(string fileLocation)
@@ -711,25 +570,188 @@ namespace MatterHackers.MatterControl
 			return false;
 		}
 
-		private void TryLoad(object sender, DoWorkEventArgs e)
+		private void onEnter(object sender, EventArgs e)
 		{
-			using (TimedLock.Lock(this, "TryLoad"))
+			HoverBorderColor = new RGBA_Bytes(255, 255, 255);
+			this.Invalidate();
+		}
+
+		private void onExit(object sender, EventArgs e)
+		{
+			HoverBorderColor = new RGBA_Bytes();
+			this.Invalidate();
+		}
+
+		private void OpenPartPreviewWindow(View3DWidget.AutoRotate autoRotate)
+		{
+			if (partPreviewWindow == null)
 			{
-				if (SetImageFast())
+				partPreviewWindow = new PartPreviewMainWindow(this.ItemWrapper, autoRotate);
+				partPreviewWindow.Name = "Part Preview Window Thumbnail";
+				partPreviewWindow.Closed += (object sender, EventArgs e) =>
 				{
-					thumbNailHasBeenRequested = true;
+					this.partPreviewWindow = null;
+				};
+			}
+			else
+			{
+				partPreviewWindow.BringToFront();
+			}
+		}
+
+		private bool SetImageFast()
+		{
+			if (this.ItemWrapper == null)
+			{
+				this.thumbnailImage = new ImageBuffer(this.noThumbnailImage);
+				this.Invalidate();
+				return true;
+			}
+
+			if (this.ItemWrapper.FileLocation == QueueData.SdCardFileName)
+			{
+				switch (this.Size)
+				{
+					case ImageSizes.Size115x115:
+						{
+							StaticData.Instance.LoadIcon(Path.ChangeExtension("icon_sd_card_115x115", partExtension), this.thumbnailImage);
+						}
+						break;
+
+					case ImageSizes.Size50x50:
+						{
+							StaticData.Instance.LoadIcon(Path.ChangeExtension("icon_sd_card_50x50", partExtension), this.thumbnailImage);
+						}
+						break;
+
+					default:
+						throw new NotImplementedException();
 				}
-				else
+				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
+				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
+				Ellipse outline = new Ellipse(new Vector2(Width / 2.0, Height / 2.0), Width / 2 - Width / 12);
+				graphics.Render(new Stroke(outline, Width / 12), RGBA_Bytes.White);
+
+				UiThread.RunOnIdle(this.EnsureImageUpdated);
+				return true;
+			}
+			else if (Path.GetExtension(this.ItemWrapper.FileLocation).ToUpper() == ".GCODE")
+			{
+				CreateImage(this, Width, Height);
+				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
+				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
+				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
+				Ellipse outline = new Ellipse(center, Width / 2 - Width / 12);
+				graphics.Render(new Stroke(outline, Width / 12), RGBA_Bytes.White);
+				graphics.DrawString("GCode", center.x, center.y, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
+
+				UiThread.RunOnIdle(this.EnsureImageUpdated);
+				return true;
+			}
+			else if (!File.Exists(this.ItemWrapper.FileLocation))
+			{
+				CreateImage(this, Width, Height);
+				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
+				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
+				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
+				graphics.DrawString("Missing", center.x, center.y, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
+
+				UiThread.RunOnIdle(this.EnsureImageUpdated);
+				return true;
+			}
+			else if (MeshIsTooBigToLoad(this.ItemWrapper.FileLocation))
+			{
+				CreateImage(this, Width, Height);
+				this.thumbnailImage.SetRecieveBlender(new BlenderPreMultBGRA());
+				Graphics2D graphics = this.thumbnailImage.NewGraphics2D();
+				Vector2 center = new Vector2(Width / 2.0, Height / 2.0);
+				double yOffset = 8 * Width / 50 * GuiWidget.DeviceScale * 2;
+				graphics.DrawString("Reduce\nPolygons\nto\nRender", center.x, center.y + yOffset, 8 * Width / 50, Agg.Font.Justification.Center, Agg.Font.Baseline.BoundsCenter, color: RGBA_Bytes.White);
+
+				UiThread.RunOnIdle(this.EnsureImageUpdated);
+				return true;
+			}
+
+			string stlHashCode = this.ItemWrapper.FileHashCode.ToString();
+
+			if (stlHashCode != "0")
+			{
+				ImageBuffer bigRender = LoadImageFromDisk(this, stlHashCode);
+				if (bigRender == null)
 				{
-					if (createThumbnailWorker == null)
+					this.thumbnailImage = new ImageBuffer(buildingThumbnailImage);
+					return false;
+				}
+
+				bigRender.SetRecieveBlender(new BlenderPreMultBGRA());
+
+				this.thumbnailImage = ImageBuffer.CreateScaledImage(bigRender, (int)Width, (int)Height);
+
+				UiThread.RunOnIdle(this.EnsureImageUpdated);
+
+				return true;
+			}
+
+			return false;
+		}
+	}
+
+	public class AllWhite
+	{
+		public static void DoAllWhite(ImageBuffer sourceImageAndDest)
+		{
+			DoAllWhite(sourceImageAndDest, sourceImageAndDest);
+		}
+
+		public static void DoAllWhite(ImageBuffer result, ImageBuffer imageA)
+		{
+			if (imageA.BitDepth != result.BitDepth)
+			{
+				throw new NotImplementedException("All the images have to be the same bit depth.");
+			}
+			if (imageA.Width != result.Width || imageA.Height != result.Height)
+			{
+				throw new Exception("All images must be the same size.");
+			}
+
+			switch (imageA.BitDepth)
+			{
+				case 32:
 					{
-						createThumbnailWorker = new BackgroundWorker();
-						createThumbnailWorker.DoWork += new DoWorkEventHandler(createThumbnailWorker_DoWork);
-						createThumbnailWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(createThumbnailWorker_RunWorkerCompleted);
-						createThumbnailWorker.RunWorkerAsync(this);
-						thumbNailHasBeenRequested = true;
+						int height = imageA.Height;
+						int width = imageA.Width;
+						byte[] resultBuffer = result.GetBuffer();
+						byte[] imageABuffer = imageA.GetBuffer();
+						for (int y = 0; y < height; y++)
+						{
+							int offsetA = imageA.GetBufferOffsetY(y);
+							int offsetResult = result.GetBufferOffsetY(y);
+
+							for (int x = 0; x < width; x++)
+							{
+								int alpha = imageABuffer[offsetA+3];
+								if (alpha > 0)
+								{
+									resultBuffer[offsetResult++] = (byte)255; offsetA++;
+									resultBuffer[offsetResult++] = (byte)255; offsetA++;
+									resultBuffer[offsetResult++] = (byte)255; offsetA++;
+									resultBuffer[offsetResult++] = (byte)alpha; offsetA++;
+								}
+								else
+								{
+									resultBuffer[offsetResult++] = (byte)0; offsetA++;
+									resultBuffer[offsetResult++] = (byte)0; offsetA++;
+									resultBuffer[offsetResult++] = (byte)0; offsetA++;
+									resultBuffer[offsetResult++] = (byte)0; offsetA++;
+								}
+							}
+						}
+						result.SetRecieveBlender(new BlenderPreMultBGRA());
 					}
-				}
+					break;
+
+				default:
+					throw new NotImplementedException();
 			}
 		}
 	}

@@ -29,6 +29,7 @@ either expressed or implied, of the FreeBSD Project.
 
 using MatterHackers.Agg.UI;
 using MatterHackers.MatterControl.SlicerConfiguration;
+using MatterHackers.MeshVisualizer;
 using MatterHackers.VectorMath;
 
 namespace MatterHackers.MatterControl.Plugins.TextCreator
@@ -44,15 +45,15 @@ namespace MatterHackers.MatterControl.Plugins.TextCreator
 
 			BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
-			double buildHeight = ActiveSliceSettings.Instance.BuildHeight;
+			double buildHeight = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.build_height);
 
 			part3DView = new View3DTextCreator(
-				new Vector3(ActiveSliceSettings.Instance.BedSize, buildHeight),
-				ActiveSliceSettings.Instance.BedCenter,
-				ActiveSliceSettings.Instance.BedShape);
+				new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size), buildHeight),
+				ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center),
+				ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape));
 
 #if __ANDROID__
-			this.AddChild(new SoftKeyboardContentOffset(part3DView, SoftKeyboardContentOffset.AndroidKeyboardOffset));
+			this.AddChild(new SoftKeyboardContentOffset(part3DView));
 #else
 			this.AddChild(part3DView);
 #endif

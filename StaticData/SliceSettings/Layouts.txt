@@ -1,5 +1,5 @@
 Simple
-  Settings
+  General
     Single
       Layers
         layer_height
@@ -7,8 +7,16 @@ Simple
       Support Material
         support_material
         create_raft
+  Printer
+    Connection
+      Description
+        printer_name
+      Details
+        auto_connect
+        baud_rate
+        com_port
 Intermediate
-  Settings
+  General
     Layers/Surface
       Layer Height
         layer_height
@@ -34,47 +42,58 @@ Intermediate
         support_material_create_internal_support
       Support Options
         support_material_spacing
+        support_material_percent
       Extruders
         support_material_extruder
   Filament
-    Filament
-      Filament
+    Material
+      Properties
         filament_diameter
-      Extruder Temperature (°C)
+        filament_density
+        filament_cost
+    Temperatures
+      Extruder Temperatures
         first_layer_temperature
         temperature
         extruder_wipe_temperature
-      Bed Temperature (°C)
+      Bed Temperatures
         first_layer_bed_temperature
         bed_temperature
         bed_remove_part_temperature
-      Retraction
+    Retraction
+      While Printing
         retract_length
         retract_speed
         retract_lift
-        wipe
-      Retraction On Tool Change
-        retract_restart_extra_toolchange
     Cooling
       Fan Speed
         min_fan_speed
         max_fan_speed
+  Printer
+    Connection
+      Description
+        printer_name
+      Details
+        auto_connect
+        baud_rate
+        com_port
 Advanced
-  Settings
+  General
     Layers/Surface
       Layer Height
         layer_height
         first_layer_height
-        bottom_clip_amount
-      Perimeters Surface
+      Outer Surface - Perimeters
         perimeters
         avoid_crossing_perimeters
-        spiral_vase
         randomize_start
         external_perimeters_first
-      Top & Bottom Surface
+        perimeter_start_end_overlap
+      Outer Surface - Top & Bottom
         top_solid_layers
         bottom_solid_layers
+      Experimental
+        expand_thin_walls
       Quality
         extra_perimeters
         start_perimeters_at_concave_points
@@ -95,6 +114,8 @@ Advanced
         only_retract_when_crossing_perimeters
         infill_first
         infill_overlap_perimeter
+      Experimental
+        fill_thin_gaps
     Speed
       Speed for Infill
         infill_speed
@@ -109,7 +130,7 @@ Advanced
         support_material_speed
         bridge_speed
         gap_fill_speed
-      Speed for non Print Moves
+      Speed for Non-Print Moves
         travel_speed
       Modifiers
         first_layer_speed
@@ -120,11 +141,13 @@ Advanced
         first_layer_acceleration
         default_acceleration
     Skirt and Raft
-      Skirt
+      Skirt (Priming)
         skirts
         skirt_distance
         skirt_height
         min_skirt_length
+      Brim (Hold Downs)
+        brims
       Raft
         create_raft
         raft_extra_distance_around_part
@@ -144,13 +167,16 @@ Advanced
         support_material_pattern
         support_material_spacing
         support_material_angle
+        support_material_percent
         support_material_infill_angle
         support_material_interface_layers
         support_material_interface_spacing
         support_material_xy_distance
         support_material_z_distance
         support_material_z_gap_layers
+        support_air_gap
         support_material_create_internal_support
+        support_material_create_perimeter
       Extruders
         support_material_extruder
         support_material_interface_extruder
@@ -162,8 +188,9 @@ Advanced
       Notes
         notes
     Output Options
-      Center Print
+      File Settings
         center_part_on_bed
+        output_only_first_layer
       Sequential Printing
         complete_objects
         extruder_clearance_height
@@ -189,42 +216,53 @@ Advanced
         resolution
         extrusion_axis
         overhangs
+    Single Print
+      Settings Will Clear at End of Print
+        spiral_vase
+        bottom_clip_amount
+        layer_to_pause
   Filament
-    Filament
-      Filament
+    Material
+      Properties
         filament_diameter
-        extrusion_multiplier
-      Extruder Temperature (°C)
+        filament_density
+        filament_cost
+    Temperatures
+      Extruder Temperatures
         first_layer_temperature
         temperature
         extruder_wipe_temperature
-      Bed Temperature (°C)
+      Bed Temperatures
         first_layer_bed_temperature
         bed_temperature
         bed_remove_part_temperature
-      Retraction
+    Retraction
+      While Printing
         retract_length
-        retract_length_tool_change
+        retract_restart_extra
         retract_speed
         retract_lift
-        retract_restart_extra
         retract_before_travel
         retract_layer_change
+        retract_when_changing_islands
         min_extrusion_before_retract
         wipe
-      Retraction On Tool Change
+      On Tool Change
+        retract_length_tool_change
         retract_restart_extra_toolchange
     Extrusion
+      Flow
+        extrusion_multiplier
+        bridge_flow_ratio
       Extrusion Width
         extrusion_width
         first_layer_extrusion_width
         perimeter_extrusion_width
+        external_perimeter_extrusion_width
         infill_extrusion_width
         solid_infill_extrusion_width
         top_infill_extrusion_width
         support_material_extrusion_width
-      Flow
-        bridge_flow_ratio
     Cooling
       Enable
         fan_always_on
@@ -241,34 +279,56 @@ Advanced
       Enable
         cool_extruder_lift
   Printer
-    General
+    Connection
+      Description
+        printer_name
+      Details
+        auto_connect
+        baud_rate
+        com_port
+    Print Area
       Size and Coordinates
         bed_size
         print_center
         build_height
         z_offset
         bed_shape
-      Firmware
-        z_can_be_negative
-        gcode_flavor
-        gcode_output_type
-        use_relative_e_distances
-        gcode_arcs
-        g0
-      Advanced
-        use_firmware_retraction
-        vibration_limit
     Features
+      Interface
+        show_reset_connection
+        include_firmware_updater
       Hardware
+        extruder_count
         has_fan
         has_hardware_leveling
         has_heated_bed
         has_sd_card_reader
         has_power_control
-        show_reset_connection
-        extruder_count
+      Behavior
+        z_homes_to_max
+        z_can_be_negative
         heat_extruder_before_homing
         extruders_share_temperature
+      Firmware
+        gcode_flavor
+        use_relative_e_distances
+        g0
+      Advanced
+        use_firmware_retraction
+        vibration_limit
+    Print Leveling
+      Machine Settings
+        print_leveling_solution
+        print_leveling_method
+        print_leveling_required_to_print
+      Probe Settings
+        manual_probe_paper_width
+      Options
+    Resume Failed Print
+      Resume Settings
+        resume_is_enabled
+        resume_first_layer_speed
+        resume_position_before_z_home
     Custom G-Code
       Start G-Code
         start_gcode
@@ -276,7 +336,9 @@ Advanced
         end_gcode
       Layer Change G-Code
         layer_gcode
-      Tool Change G-Code
+      Before Tool Change G-Code
+        before_toolchange_gcode
+      After Tool Change G-Code
         toolchange_gcode
       Pause G-Code
         pause_gcode

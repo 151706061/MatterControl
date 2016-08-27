@@ -30,35 +30,19 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Localizations;
 using MatterHackers.MeshVisualizer;
 using MatterHackers.PolygonMesh;
+using MatterHackers.VectorMath;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.PartPreviewWindow
 {
 	public partial class View3DWidget
 	{
-		private void UngroupSelectedMeshGroup()
-		{
-			if (MeshGroups.Count > 0)
-			{
-				processingProgressControl.PercentComplete = 0;
-				processingProgressControl.Visible = true;
-				LockEditControls();
-				viewIsInEditModePreLock = true;
-
-				BackgroundWorker createDiscreteMeshesBackgroundWorker = null;
-				createDiscreteMeshesBackgroundWorker = new BackgroundWorker();
-
-				createDiscreteMeshesBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(ungroupSelectedBackgroundWorker_RunWorkerCompleted);
-				createDiscreteMeshesBackgroundWorker.DoWork += new DoWorkEventHandler(ungroupSelectedBackgroundWorker_DoWork);
-
-				createDiscreteMeshesBackgroundWorker.RunWorkerAsync();
-			}
-		}
-
-		private void ungroupSelectedBackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
+		private void UngroupSelected()
 		{
 			if (SelectedMeshGroupIndex == -1)
 			{
@@ -69,75 +53,83 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			processingProgressControl.ProcessType = makingCopyLabelFull;
 
 			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-			BackgroundWorker backgroundWorker = (BackgroundWorker)sender;
 
 			PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DO_COPY);
 
 			int indexBeingReplaced = SelectedMeshGroupIndex;
 			List<Mesh> discreetMeshes = new List<Mesh>();
-			asynchMeshGroups[indexBeingReplaced].Transform(asynchMeshGroupTransforms[indexBeingReplaced].TotalTransform);
+			asyncMeshGroups[indexBeingReplaced].Transform(asyncMeshGroupTransforms[indexBeingReplaced]);
 			// if there are multiple meshes than just make them separate groups
-			if (asynchMeshGroups[indexBeingReplaced].Meshes.Count > 1)
+			if (asyncMeshGroups[indexBeingReplaced].Meshes.Count > 1)
 			{
-				foreach (Mesh mesh in asynchMeshGroups[indexBeingReplaced].Meshes)
+				foreach (Mesh mesh in asyncMeshGroups[indexBeingReplaced].Meshes)
 				{
 					discreetMeshes.Add(mesh);
 				}
 			}
 			else // actually try and cut up the mesh into separate parts
 			{
-				discreetMeshes = CreateDiscreteMeshes.SplitConnectedIntoMeshes(asynchMeshGroups[indexBeingReplaced], (double progress0To1, string processingState, out bool continueProcessing) =>
+				discreetMeshes = CreateDiscreteMeshes.SplitConnectedIntoMeshes(asyncMeshGroups[indexBeingReplaced], (double progress0To1, string processingState, out bool continueProcessing) =>
 				{
-					BackgroundWorker_ProgressChanged(progress0To1 * .5, processingState, out continueProcessing);
+					ReportProgressChanged(progress0To1 * .5, processingState, out continueProcessing);
 				});
 			}
 
-			asynchMeshGroups.RemoveAt(indexBeingReplaced);
-			asynchPlatingDatas.RemoveAt(indexBeingReplaced);
-			asynchMeshGroupTransforms.RemoveAt(indexBeingReplaced);
+			asyncMeshGroups.RemoveAt(indexBeingReplaced);
+			asyncPlatingDatas.RemoveAt(indexBeingReplaced);
+			asyncMeshGroupTransforms.RemoveAt(indexBeingReplaced);
 			double ratioPerDiscreetMesh = 1.0 / discreetMeshes.Count;
 			double currentRatioDone = 0;
 			for (int discreetMeshIndex = 0; discreetMeshIndex < discreetMeshes.Count; discreetMeshIndex++)
 			{
 				PlatingMeshGroupData newInfo = new PlatingMeshGroupData();
-				asynchPlatingDatas.Add(newInfo);
-				asynchMeshGroups.Add(new MeshGroup(discreetMeshes[discreetMeshIndex]));
-				int addedMeshIndex = asynchMeshGroups.Count - 1;
-				MeshGroup addedMeshGroup = asynchMeshGroups[addedMeshIndex];
+				asyncPlatingDatas.Add(newInfo);
+				asyncMeshGroups.Add(new MeshGroup(discreetMeshes[discreetMeshIndex]));
+				int addedMeshIndex = asyncMeshGroups.Count - 1;
+				MeshGroup addedMeshGroup = asyncMeshGroups[addedMeshIndex];
 
-				ScaleRotateTranslate transform = ScaleRotateTranslate.Identity();
-				transform.SetCenteringForMeshGroup(addedMeshGroup);
-				asynchMeshGroupTransforms.Add(transform);
+				Matrix4X4 transform = Matrix4X4.Identity;
+				asyncMeshGroupTransforms.Add(transform);
 
-				//PlatingHelper.PlaceMeshGroupOnBed(asynchMeshGroups, asynchMeshGroupTransforms, addedMeshIndex, false);
+				//PlatingHelper.PlaceMeshGroupOnBed(asyncMeshGroups, asyncMeshGroupTransforms, addedMeshIndex, false);
 
 				// and create selection info
-				PlatingHelper.CreateITraceableForMeshGroup(asynchPlatingDatas, asynchMeshGroups, addedMeshIndex, (double progress0To1, string processingState, out bool continueProcessing) =>
+				PlatingHelper.CreateITraceableForMeshGroup(asyncPlatingDatas, asyncMeshGroups, addedMeshIndex, (double progress0To1, string processingState, out bool continueProcessing) =>
 				{
-					BackgroundWorker_ProgressChanged(.5 + progress0To1 * .5 * currentRatioDone, processingState, out continueProcessing);
+					ReportProgressChanged(.5 + progress0To1 * .5 * currentRatioDone, processingState, out continueProcessing);
 				});
 				currentRatioDone += ratioPerDiscreetMesh;
 			}
 		}
 
-		private void ungroupSelectedBackgroundWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+		private async void UngroupSelectedMeshGroup()
 		{
-			if (WidgetHasBeenClosed)
+			if (MeshGroups.Count > 0)
 			{
-				return;
+				processingProgressControl.PercentComplete = 0;
+				processingProgressControl.Visible = true;
+				LockEditControls();
+				viewIsInEditModePreLock = true;
+
+				await Task.Run((System.Action)UngroupSelected);
+
+				if (HasBeenClosed)
+				{
+					return;
+				}
+
+				// remove the original mesh and replace it with these new meshes
+				PullMeshGroupDataFromAsynchLists();
+
+				// our selection changed to the mesh we just added which is at the end
+				SelectedMeshGroupIndex = MeshGroups.Count - 1;
+
+				UnlockEditControls();
+
+				PartHasBeenChanged();
+
+				Invalidate();
 			}
-
-			// remove the original mesh and replace it with these new meshes
-			PullMeshGroupDataFromAsynchLists();
-
-			// our selection changed to the mesh we just added which is at the end
-			SelectedMeshGroupIndex = MeshGroups.Count - 1;
-
-			UnlockEditControls();
-
-			PartHasBeenChanged();
-
-			Invalidate();
 		}
 	}
 }

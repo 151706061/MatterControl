@@ -1,31 +1,27 @@
 ﻿using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.MatterControl.PrinterCommunication;
 using System;
 
 namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 {
-	public class SetupStepComPortOne : SetupConnectionWidgetBase
+	public class SetupStepComPortOne : ConnectionWizardPage
 	{
 		private Button nextButton;
 
-		public SetupStepComPortOne(ConnectionWindow windowController, GuiWidget containerWindowToClose, PrinterSetupStatus setupPrinter)
-			: base(windowController, containerWindowToClose, setupPrinter)
+		public SetupStepComPortOne()
 		{
 			contentRow.AddChild(createPrinterConnectionMessageContainer());
 			{
 				//Construct buttons
-				nextButton = textImageButtonFactory.Generate(LocalizedString.Get("Continue"));
-				nextButton.Click += new EventHandler(NextButton_Click);
-
-				GuiWidget hSpacer = new GuiWidget();
-				hSpacer.HAnchor = HAnchor.ParentLeftRight;
+				nextButton = textImageButtonFactory.Generate("Continue".Localize());
+				nextButton.Click += (s, e) => WizardWindow.ChangeToPage<SetupStepComPortTwo>();
 
 				//Add buttons to buttonContainer
 				footerRow.AddChild(nextButton);
-				footerRow.AddChild(hSpacer);
-
+				footerRow.AddChild(new HorizontalSpacer());
 				footerRow.AddChild(cancelButton);
 			}
 		}
@@ -71,7 +67,7 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 			Button manualLink = linkButtonFactory.Generate(LocalizedString.Get("Manually Configure Connection"));
 			manualLink.Margin = new BorderDouble(0, 5);
-			manualLink.Click += new EventHandler(ManualLink_Click);
+			manualLink.Click += (s, e) => WizardWindow.ChangeToPage<SetupStepComPortManual>();
 
 			string printerMessageFourText = LocalizedString.Get("or");
 			TextWidget printerMessageFour = new TextWidget(printerMessageFourText, 0, 0, 10);
@@ -81,7 +77,7 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 
 			Button skipConnectionLink = linkButtonFactory.Generate(LocalizedString.Get("Skip Connection Setup"));
 			skipConnectionLink.Margin = new BorderDouble(0, 8);
-			skipConnectionLink.Click += new EventHandler(SkipConnectionLink_Click);
+			skipConnectionLink.Click += SkipConnectionLink_Click;
 
 			container.AddChild(printerMessageOne);
 			container.AddChild(printerMessageTwo);
@@ -96,39 +92,12 @@ namespace MatterHackers.MatterControl.PrinterControls.PrinterConnections
 			return container;
 		}
 
-		private void ManualLink_Click(object sender, EventArgs mouseEvent)
-		{
-			UiThread.RunOnIdle(MoveToManualConfiguration);
-		}
-
-		private void MoveToManualConfiguration(object state)
-		{
-			Parent.AddChild(new SetupStepComPortManual((ConnectionWindow)Parent, Parent, this.currentPrinterSetupStatus));
-			Parent.RemoveChild(this);
-		}
-
-		private void NextButton_Click(object sender, EventArgs mouseEvent)
-		{
-			UiThread.RunOnIdle(MoveToNextWidget);
-		}
-
-		private void MoveToNextWidget(object state)
-		{
-			Parent.AddChild(new SetupStepComPortTwo((ConnectionWindow)Parent, Parent, this.currentPrinterSetupStatus));
-			Parent.RemoveChild(this);
-		}
-
 		private void SkipConnectionLink_Click(object sender, EventArgs mouseEvent)
 		{
-			PrinterConnectionAndCommunication.Instance.HaltConnectionThread();
-			if (GetPrinterRecordCount() > 0)
-			{
-				this.windowController.ChangeToChoosePrinter();
-			}
-			else
-			{
+			UiThread.RunOnIdle(() => {
+				PrinterConnectionAndCommunication.Instance.HaltConnectionThread();
 				Parent.Close();
-			}
+			});
 		}
 	}
 }

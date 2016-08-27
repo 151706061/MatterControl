@@ -27,10 +27,12 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
+using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.MatterControl.PrinterCommunication;
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace MatterHackers.MatterControl.EeProm
 {
@@ -49,14 +51,20 @@ namespace MatterHackers.MatterControl.EeProm
 
 		public void Clear()
 		{
-			eePromSettingsList.Clear();
+			lock (eePromSettingsList)
+			{
+				eePromSettingsList.Clear();
+			}
 		}
 
 		public void Save()
 		{
-			foreach (EePromRepetierParameter p in eePromSettingsList.Values)
+			lock (eePromSettingsList)
 			{
-				p.save();
+				foreach (EePromRepetierParameter p in eePromSettingsList.Values)
+				{
+					p.Save();
+				}
 			}
 		}
 
@@ -77,21 +85,67 @@ namespace MatterHackers.MatterControl.EeProm
 			}
 
 			EePromRepetierParameter parameter = new EePromRepetierParameter(line);
-			if (eePromSettingsList.ContainsKey(parameter.position))
+			lock (eePromSettingsList)
 			{
-				eePromSettingsList.Remove(parameter.position);
+				if (eePromSettingsList.ContainsKey(parameter.position))
+				{
+					eePromSettingsList.Remove(parameter.position);
+				}
+
+				eePromSettingsList.Add(parameter.position, parameter);
 			}
 
-			eePromSettingsList.Add(parameter.position, parameter);
-			if (eventAdded != null)
-			{
-				eventAdded(this, parameter);
-			}
+			eventAdded(this, parameter);
 		}
 
 		public void AskPrinterForSettings()
 		{
 			PrinterConnectionAndCommunication.Instance.SendLineToPrinterNow("M205");
+		}
+
+		internal void Export(string fileName)
+		{
+			using (var sw = new StreamWriter(fileName))
+			{
+				lock (eePromSettingsList)
+				{
+					foreach (EePromRepetierParameter p in eePromSettingsList.Values)
+					{
+						string data = "{0}|{1}".FormatWith(p.description, p.value);
+						sw.WriteLine(data);
+					}
+				}
+			}
+		}
+
+		internal void Import(string fileName)
+		{
+			// read all the lines 
+			string[] allLines = File.ReadAllLines(fileName);
+			// find all the descriptions we can
+			foreach (string line in allLines)
+			{
+				if (line.Contains("|"))
+				{
+					string[] descriptionValue = line.Split('|');
+					if (descriptionValue.Length == 2)
+					{
+						foreach (KeyValuePair<int, EePromRepetierParameter> keyValue in eePromSettingsList)
+						{
+							if (keyValue.Value.Description == descriptionValue[0])
+							{
+								if(keyValue.Value.Value != descriptionValue[1])
+								{
+									// push in the value
+									keyValue.Value.Value = descriptionValue[1];
+									keyValue.Value.MarkChanged();
+									break;
+                                }
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

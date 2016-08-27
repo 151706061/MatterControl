@@ -116,7 +116,10 @@ namespace MatterHackers.MatterControl
 
 		public void Clear()
 		{
-			PrinterLines.Clear();
+			lock(PrinterLines)
+			{
+				PrinterLines.Clear();
+			}
 			OnHasChanged(null);
 		}
 	}

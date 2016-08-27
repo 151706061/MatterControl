@@ -30,7 +30,9 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
+using MatterHackers.MatterControl.CustomWidgets;
 using System;
+using System.Diagnostics;
 
 namespace MatterHackers.MatterControl
 {
@@ -59,9 +61,6 @@ namespace MatterHackers.MatterControl
 				updateStatusText.AutoExpandBoundsToText = true;
 				updateStatusText.VAnchor = VAnchor.ParentCenter;
 
-				GuiWidget horizontalSpacer = new GuiWidget();
-				horizontalSpacer.HAnchor = HAnchor.ParentLeftRight;
-
 				checkUpdateLink = textImageButtonFactory.Generate("Check for Update".Localize());
 				checkUpdateLink.VAnchor = VAnchor.ParentCenter;
 				checkUpdateLink.Click += CheckForUpdate;
@@ -78,7 +77,7 @@ namespace MatterHackers.MatterControl
 				installUpdateLink.Visible = false;
 
 				AddChild(updateStatusText);
-				AddChild(horizontalSpacer);
+				AddChild(new HorizontalSpacer());
 				AddChild(checkUpdateLink);
 				AddChild(downloadUpdateLink);
 				AddChild(installUpdateLink);
@@ -109,7 +108,7 @@ namespace MatterHackers.MatterControl
 		{
 			try
 			{
-				if (!UpdateControlData.Instance.InstallUpdate(this))
+				if (!UpdateControlData.Instance.InstallUpdate())
 				{
 					installUpdateLink.Visible = false;
 					updateStatusText.Text = string.Format("Oops! Unable to install update.".Localize());
@@ -117,6 +116,7 @@ namespace MatterHackers.MatterControl
 			}
 			catch
 			{
+				GuiWidget.BreakInDebugger();
 				installUpdateLink.Visible = false;
 				updateStatusText.Text = string.Format("Oops! Unable to install update.".Localize());
 			}
@@ -129,6 +129,9 @@ namespace MatterHackers.MatterControl
 
 			UpdateControlData.Instance.InitiateUpdateDownload();
 		}
+
+		static string recommendedUpdateAvailable = "There is a recommended update available.".Localize();
+		static string requiredUpdateAvailable = "There is a required update available.".Localize();
 
 		private void UpdateStatusChanged(object sender, EventArgs e)
 		{
@@ -152,7 +155,14 @@ namespace MatterHackers.MatterControl
 					break;
 
 				case UpdateControlData.UpdateStatusStates.UpdateAvailable:
-					updateStatusText.Text = string.Format("There is a recommended update available.".Localize());
+					if (UpdateControlData.Instance.UpdateRequired)
+					{
+						updateStatusText.Text = requiredUpdateAvailable;
+					}
+					else
+					{
+						updateStatusText.Text = recommendedUpdateAvailable;
+					}
 					downloadUpdateLink.Visible = true;
 					installUpdateLink.Visible = false;
 					checkUpdateLink.Visible = false;

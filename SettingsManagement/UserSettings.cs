@@ -1,17 +1,37 @@
-﻿using System.Collections.Generic;
+﻿using MatterHackers.MatterControl.DataStorage;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MatterHackers.MatterControl
 {
+	public enum ApplicationDisplayType { Responsive, Touchscreen };
+
 	public class UserSettings
 	{
 		private static UserSettings globalInstance = null;
-		public Dictionary<string, DataStorage.UserSetting> settingsDictionary;
 
-		private UserSettingsFields fields = new UserSettingsFields();
+		private static readonly object syncRoot = new object();
 
-		public UserSettingsFields Fields
+		private Dictionary<string, UserSetting> settingsDictionary;
+
+		private UserSettings()
 		{
-			get { return fields; }
+			// Load the UserSettings from the database
+			settingsDictionary = new Dictionary<string, UserSetting>();
+			foreach(var userSetting in Datastore.Instance.dbSQLite.Query<UserSetting>("SELECT * FROM UserSetting;"))
+			{
+				// Allow for duplicate entries in the database with the same .Name value
+				settingsDictionary[userSetting.Name] = userSetting;
+			}
+
+			// Set English as default language if unset
+			if (string.IsNullOrEmpty(this.get("Language")))
+			{
+				this.set("Language", "en");
+			}
+
+			// Propagate Language to local property
+			this.Language = this.get("Language");
 		}
 
 		public static UserSettings Instance
@@ -20,63 +40,73 @@ namespace MatterHackers.MatterControl
 			{
 				if (globalInstance == null)
 				{
-					globalInstance = new UserSettings();
-					globalInstance.LoadData();
+					lock(syncRoot)
+					{
+						if (globalInstance == null)
+						{
+							globalInstance = new UserSettings();
+						}
+					}
 				}
 
 				return globalInstance;
 			}
 		}
 
+		public string Language { get; private set; } 
+
+		public UserSettingsFields Fields { get; private set; } = new UserSettingsFields();
+
 		public string get(string key)
 		{
-			string result;
-			if (settingsDictionary.ContainsKey(key))
-			{
-				result = settingsDictionary[key].Value;
+			UserSetting userSetting;
+			if (settingsDictionary.TryGetValue(key, out userSetting))
+			{ 
+				return userSetting.Value;
 			}
-			else
-			{
-				result = null;
-			}
-			return result;
+
+			return null;
 		}
 
 		public void set(string key, string value)
 		{
-			DataStorage.UserSetting setting;
-			if (settingsDictionary.ContainsKey(key))
-			{
-				setting = settingsDictionary[key];
-			}
-			else
-			{
-				setting = new DataStorage.UserSetting();
-				setting.Name = key;
+			UserSetting setting;
 
+			if(!settingsDictionary.TryGetValue(key, out setting))
+			{
+				// If the setting for the given key doesn't exist, create it
+				setting = new UserSetting()
+				{
+					Name = key
+				};
 				settingsDictionary[key] = setting;
+			}
+
+			// Special case to propagate Language to local property on assignment
+			if(key == "Language")
+			{
+				this.Language = value;
 			}
 
 			setting.Value = value;
 			setting.Commit();
 		}
 
-		private void LoadData()
+		public ApplicationDisplayType DisplayMode
 		{
-			IEnumerable<DataStorage.UserSetting> settingsList = GetApplicationSettings();
-			settingsDictionary = new Dictionary<string, DataStorage.UserSetting>();
-			foreach (DataStorage.UserSetting s in settingsList)
+			get
 			{
-				settingsDictionary[s.Name] = s;
+				if (this.get("ApplicationDisplayMode") == "touchscreen")
+				{
+					return ApplicationDisplayType.Touchscreen;
+				}
+				else
+				{
+					return ApplicationDisplayType.Responsive;
+				}
 			}
 		}
 
-		private IEnumerable<DataStorage.UserSetting> GetApplicationSettings()
-		{
-			//Retrieve a list of settings from the Datastore
-			string query = string.Format("SELECT * FROM UserSetting;");
-			IEnumerable<DataStorage.UserSetting> result = (IEnumerable<DataStorage.UserSetting>)DataStorage.Datastore.Instance.dbSQLite.Query<DataStorage.UserSetting>(query);
-			return result;
-		}
+		public bool IsTouchScreen => this.get("ApplicationDisplayMode") == "touchscreen";
 	}
 }

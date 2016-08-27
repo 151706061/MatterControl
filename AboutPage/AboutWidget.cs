@@ -1,5 +1,5 @@
 ﻿/*
-Copyright (c) 2014, Lars Brubaker
+Copyright (c) 2015, Lars Brubaker
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -35,11 +35,14 @@ using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.ContactForm;
 using MatterHackers.MatterControl.CustomWidgets;
+using MatterHackers.MatterControl.DataStorage;
 using MatterHackers.MatterControl.HtmlParsing;
 using MatterHackers.MatterControl.PrintLibrary;
+using MatterHackers.MatterControl.PrintLibrary.Provider;
 using MatterHackers.MatterControl.PrintQueue;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 
@@ -61,20 +64,24 @@ namespace MatterHackers.MatterControl
 			customInfoTopToBottom.VAnchor = VAnchor.Max_FitToChildren_ParentHeight;
 			customInfoTopToBottom.Padding = new BorderDouble(5, 10, 5, 0);
 
-			customInfoTopToBottom.AddChild(new UpdateControlView());
+			if (UserSettings.Instance.IsTouchScreen)
+			{
+				customInfoTopToBottom.AddChild(new UpdateControlView());
+			}
+
 			//AddMatterHackersInfo(customInfoTopToBottom);
 			customInfoTopToBottom.AddChild(new GuiWidget(1, 10));
 
 			string aboutHtmlFile = Path.Combine("OEMSettings", "AboutPage.html");
-			string htmlContent = StaticData.Instance.ReadAllText(aboutHtmlFile);
+			string htmlContent = StaticData.Instance.ReadAllText(aboutHtmlFile); 
 
 #if false // test
 			{
 				SystemWindow releaseNotes = new SystemWindow(640, 480);
-				string releaseNotesFile = Path.Combine("OEMSettings", "ReleaseNotesMini.html");
+				string releaseNotesFile = Path.Combine("OEMSettings", "ReleaseNotes.html");
 				string releaseNotesContent = StaticData.Instance.ReadAllText(releaseNotesFile);
 				HtmlWidget content = new HtmlWidget(releaseNotesContent, RGBA_Bytes.Black);
-				content.AddChild(new GuiWidget(HAnchor.None, VAnchor.ParentBottomTop));
+				content.AddChild(new GuiWidget(HAnchor.AbsolutePosition, VAnchor.ParentBottomTop));
 				content.VAnchor |= VAnchor.ParentTop;
 				content.BackgroundColor = RGBA_Bytes.White;
 				releaseNotes.AddChild(content);
@@ -93,8 +100,13 @@ namespace MatterHackers.MatterControl
 			this.AddChild(customInfoTopToBottom);
 		}
 
-		public static void DeleteCacheData()
+		public static void DeleteCacheData(int daysOldToDelete)
 		{
+			if(LibraryProviderSQLite.PreloadingCalibrationFiles)
+			{
+				return;
+			}
+
 			// delete everything in the GCodeOutputPath
 			//   AppData\Local\MatterControl\data\gcode
 			// delete everything in the temp data that is not in use
@@ -103,45 +115,46 @@ namespace MatterHackers.MatterControl
 			//     project-assembly
 			//     project-extract
 			//     stl
-			// delete all unreference models in Library
+			// delete all unreferenced models in Library
 			//   AppData\Local\MatterControl\Library
 			// delete all old update downloads
 			//   AppData\updates
 
 			// start cleaning out unused data
 			// MatterControl\data\gcode
-			RemoveDirectory(DataStorage.ApplicationDataStorage.Instance.GCodeOutputPath);
+			HashSet<string> referencedFilePaths = new HashSet<string>();
+			CleanDirectory(ApplicationDataStorage.Instance.GCodeOutputPath, referencedFilePaths, daysOldToDelete);
 
-			string userDataPath = DataStorage.ApplicationDataStorage.Instance.ApplicationUserDataPath;
+			string userDataPath = ApplicationDataStorage.ApplicationUserDataPath;
 			RemoveDirectory(Path.Combine(userDataPath, "updates"));
 
-			HashSet<string> referencedPrintItemsFilePaths = new HashSet<string>();
-			HashSet<string> referencedThumbnailFiles = new HashSet<string>();
-			// Get a list of all the stl and amf files referenced in the queue or library.
+			// Get a list of all the stl and amf files referenced in the queue.
 			foreach (PrintItemWrapper printItem in QueueData.Instance.PrintItems)
 			{
 				string fileLocation = printItem.FileLocation;
-				if (!referencedPrintItemsFilePaths.Contains(fileLocation))
+				if (!referencedFilePaths.Contains(fileLocation))
 				{
-					referencedPrintItemsFilePaths.Add(fileLocation);
-					referencedThumbnailFiles.Add(PartThumbnailWidget.GetImageFilenameForItem(printItem));
+					referencedFilePaths.Add(fileLocation);
+					referencedFilePaths.Add(PartThumbnailWidget.GetImageFileName(printItem));
 				}
 			}
 
-			foreach (PrintItemWrapper printItem in LibraryData.Instance.PrintItems)
+			// Add in all the stl and amf files referenced in the library.
+			foreach (PrintItem printItem in LibraryProviderSQLite.GetAllPrintItemsRecursive())
 			{
+				PrintItemWrapper printItemWrapper = new PrintItemWrapper(printItem);
 				string fileLocation = printItem.FileLocation;
-				if (!referencedPrintItemsFilePaths.Contains(fileLocation))
+				if (!referencedFilePaths.Contains(fileLocation))
 				{
-					referencedPrintItemsFilePaths.Add(fileLocation);
-					referencedThumbnailFiles.Add(PartThumbnailWidget.GetImageFilenameForItem(printItem));
+					referencedFilePaths.Add(fileLocation);
+					referencedFilePaths.Add(PartThumbnailWidget.GetImageFileName(printItemWrapper));
 				}
 			}
 
 			// If the count is less than 0 then we have never run and we need to populate the library and queue still. So don't delete anything yet.
-			if (referencedPrintItemsFilePaths.Count > 0)
+			if (referencedFilePaths.Count > 0)
 			{
-				CleanDirectory(userDataPath, referencedPrintItemsFilePaths, referencedThumbnailFiles);
+				CleanDirectory(userDataPath, referencedFilePaths, daysOldToDelete);
 			}
 		}
 
@@ -175,13 +188,19 @@ namespace MatterHackers.MatterControl
 			return VersionInfo.Instance.ReleaseVersion;
 		}
 
-		private static int CleanDirectory(string path, HashSet<string> referencedPrintItemsFilePaths, HashSet<string> referencedThumbnailFiles)
+		static HashSet<string> folderNamesToPreserve = new HashSet<string>()
+		{
+			"profiles",
+		};
+
+		private static int CleanDirectory(string path, HashSet<string> referencedFilePaths, int daysOldToDelete)
 		{
 			int contentCount = 0;
 			foreach (string directory in Directory.EnumerateDirectories(path))
 			{
-				int directoryContentCount = CleanDirectory(directory, referencedPrintItemsFilePaths, referencedThumbnailFiles);
-				if (directoryContentCount == 0)
+				int directoryContentCount = CleanDirectory(directory, referencedFilePaths, daysOldToDelete);
+				if (directoryContentCount == 0
+					&& !folderNamesToPreserve.Contains(Path.GetFileName(directory)))
 				{
 					try
 					{
@@ -189,6 +208,7 @@ namespace MatterHackers.MatterControl
 					}
 					catch (Exception)
 					{
+						GuiWidget.BreakInDebugger();
 					}
 				}
 				else
@@ -200,30 +220,19 @@ namespace MatterHackers.MatterControl
 
 			foreach (string file in Directory.EnumerateFiles(path, "*.*"))
 			{
+				bool loadingCalibrationParts = (LibraryProviderSQLite.PreloadingCalibrationFiles && Path.GetDirectoryName(file).Contains("calibration-parts"));
+				bool fileIsNew = new FileInfo(file).LastAccessTime > DateTime.Now.AddDays(-daysOldToDelete);
+
 				switch (Path.GetExtension(file).ToUpper())
 				{
 					case ".STL":
 					case ".AMF":
 					case ".GCODE":
-						if (referencedPrintItemsFilePaths.Contains(file))
-						{
-							contentCount++;
-						}
-						else
-						{
-							try
-							{
-								File.Delete(file);
-							}
-							catch (Exception)
-							{
-							}
-						}
-						break;
-
 					case ".PNG":
 					case ".TGA":
-						if (referencedThumbnailFiles.Contains(file))
+						if (referencedFilePaths.Contains(file)
+							|| loadingCalibrationParts
+							|| fileIsNew)
 						{
 							contentCount++;
 						}
@@ -235,13 +244,14 @@ namespace MatterHackers.MatterControl
 							}
 							catch (Exception)
 							{
+								GuiWidget.BreakInDebugger();
 							}
 						}
 						break;
 
 					case ".JSON":
 						// may want to clean these up eventually
-						contentCount++; // if we delete these we should not incement this
+						contentCount++; // if we delete these we should not increment this
 						break;
 
 					default:
@@ -265,6 +275,7 @@ namespace MatterHackers.MatterControl
 			}
 			catch (Exception)
 			{
+				GuiWidget.BreakInDebugger();
 			}
 		}
 	}

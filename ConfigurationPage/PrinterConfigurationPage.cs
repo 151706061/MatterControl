@@ -33,6 +33,7 @@ using MatterHackers.Localizations;
 using MatterHackers.MatterControl.ConfigurationPage;
 using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.MatterControl.PrinterCommunication;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
@@ -69,8 +70,12 @@ namespace MatterHackers.MatterControl
 			mainLayoutContainer.VAnchor = Agg.UI.VAnchor.FitToChildren;
 			mainLayoutContainer.Padding = new BorderDouble(top: 10);
 
-			HardwareSettingsWidget hardwareGroupbox = new HardwareSettingsWidget();
-			mainLayoutContainer.AddChild(hardwareGroupbox);
+			if (!ActiveSliceSettings.Instance.GetValue<bool>(SettingsKey.has_hardware_leveling))
+			{
+				mainLayoutContainer.AddChild(new CalibrationSettingsWidget());
+			}
+
+			mainLayoutContainer.AddChild(new HardwareSettingsWidget());
 
 			CloudSettingsWidget cloudGroupbox = new CloudSettingsWidget();
 			mainLayoutContainer.AddChild(cloudGroupbox);
@@ -123,7 +128,7 @@ namespace MatterHackers.MatterControl
 
 		private void RestartApplication()
 		{
-			UiThread.RunOnIdle((state) =>
+			UiThread.RunOnIdle(() =>
 			{
 				//horrible hack - to be replaced
 				GuiWidget parent = this;
@@ -139,7 +144,7 @@ namespace MatterHackers.MatterControl
 
 		private void LanguageDropList_SelectionChanged(object sender, EventArgs e)
 		{
-			string languageCode = ((DropDownList)sender).SelectedLabel;
+			string languageCode = ((Agg.UI.DropDownList)sender).SelectedLabel;
 			if (languageCode != UserSettings.Instance.get("Language"))
 			{
 				UserSettings.Instance.set("Language", languageCode);
@@ -160,7 +165,7 @@ namespace MatterHackers.MatterControl
 			FlowLayoutWidget controlsContainer = new FlowLayoutWidget();
 			controlsContainer.HAnchor |= HAnchor.ParentCenter;
 
-			AnchoredDropDownList releaseOptionsDropList = new AnchoredDropDownList("Development");
+			var releaseOptionsDropList = new DropDownList("Development");
 			releaseOptionsDropList.Margin = new BorderDouble(0, 3);
 
 			MenuItem releaseOptionsDropDownItem = releaseOptionsDropList.AddItem("Release", "release");
@@ -198,7 +203,7 @@ namespace MatterHackers.MatterControl
 
 		private void ReleaseOptionsDropList_SelectionChanged(object sender, EventArgs e)
 		{
-			string releaseCode = ((AnchoredDropDownList)sender).SelectedValue;
+			string releaseCode = ((DropDownList)sender).SelectedValue;
 			if (releaseCode != UserSettings.Instance.get("UpdateFeedType"))
 			{
 				UserSettings.Instance.set("UpdateFeedType", releaseCode);

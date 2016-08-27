@@ -34,61 +34,37 @@ using MatterHackers.VectorMath;
 using System.ComponentModel;
 using System.Globalization;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.PartPreviewWindow
 {
 	public partial class View3DWidget
 	{
-		private void AlignToSelectedMeshGroup()
-		{
-			if (MeshGroups.Count > 0)
-			{
-				// set the progress lable text
-				processingProgressControl.PercentComplete = 0;
-				processingProgressControl.Visible = true;
-				string makingCopyLabel = LocalizedString.Get("Aligning");
-				string makingCopyLabelFull = string.Format("{0}:", makingCopyLabel);
-				processingProgressControl.ProcessType = makingCopyLabelFull;
-
-				LockEditControls();
-				viewIsInEditModePreLock = true;
-
-				BackgroundWorker createDiscreteMeshesBackgroundWorker = null;
-				createDiscreteMeshesBackgroundWorker = new BackgroundWorker();
-
-				createDiscreteMeshesBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(alignSelectedBackgroundWorker_RunWorkerCompleted);
-				createDiscreteMeshesBackgroundWorker.DoWork += new DoWorkEventHandler(alignSelectedBackgroundWorker_DoWork);
-
-				createDiscreteMeshesBackgroundWorker.RunWorkerAsync();
-			}
-		}
-
-		private void alignSelectedBackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
+		private void AlignSelected()
 		{
 			if (SelectedMeshGroupIndex == -1)
 			{
 				SelectedMeshGroupIndex = 0;
 			}
-			// make sure our thread traslates numbmers correctly (always do this in a thread)
+			// make sure our thread translates numbers correctly (always do this in a thread)
 			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-			BackgroundWorker backgroundWorker = (BackgroundWorker)sender;
 
 			// save our data so we don't mess up the display while doing work
 			PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DO_COPY);
 
 			// try to move all the not selected meshes relative to the selected mesh
-			AxisAlignedBoundingBox selectedOriginalBounds = asynchMeshGroups[SelectedMeshGroupIndex].GetAxisAlignedBoundingBox();
+			AxisAlignedBoundingBox selectedOriginalBounds = asyncMeshGroups[SelectedMeshGroupIndex].GetAxisAlignedBoundingBox();
 			Vector3 selectedOriginalCenter = selectedOriginalBounds.Center;
-			AxisAlignedBoundingBox selectedCurrentBounds = asynchMeshGroups[SelectedMeshGroupIndex].GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[SelectedMeshGroupIndex].TotalTransform);
+			AxisAlignedBoundingBox selectedCurrentBounds = asyncMeshGroups[SelectedMeshGroupIndex].GetAxisAlignedBoundingBox(asyncMeshGroupTransforms[SelectedMeshGroupIndex]);
 			Vector3 selctedCurrentCenter = selectedCurrentBounds.Center;
-			for (int meshGroupToMoveIndex = 0; meshGroupToMoveIndex < asynchMeshGroups.Count; meshGroupToMoveIndex++)
+			for (int meshGroupToMoveIndex = 0; meshGroupToMoveIndex < asyncMeshGroups.Count; meshGroupToMoveIndex++)
 			{
-				MeshGroup meshGroupToMove = asynchMeshGroups[meshGroupToMoveIndex];
-				if (meshGroupToMove != asynchMeshGroups[SelectedMeshGroupIndex])
+				MeshGroup meshGroupToMove = asyncMeshGroups[meshGroupToMoveIndex];
+				if (meshGroupToMove != asyncMeshGroups[SelectedMeshGroupIndex])
 				{
 					AxisAlignedBoundingBox groupToMoveOriginalBounds = meshGroupToMove.GetAxisAlignedBoundingBox();
 					Vector3 groupToMoveOriginalCenter = groupToMoveOriginalBounds.Center;
-					AxisAlignedBoundingBox groupToMoveBounds = meshGroupToMove.GetAxisAlignedBoundingBox(asynchMeshGroupTransforms[meshGroupToMoveIndex].TotalTransform);
+					AxisAlignedBoundingBox groupToMoveBounds = meshGroupToMove.GetAxisAlignedBoundingBox(asyncMeshGroupTransforms[meshGroupToMoveIndex]);
 					Vector3 groupToMoveCenter = groupToMoveBounds.Center;
 
 					Vector3 originalCoordinatesDelta = groupToMoveOriginalCenter - selectedOriginalCenter;
@@ -98,19 +74,17 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 					if (deltaRequired.Length > .0001)
 					{
-						ScaleRotateTranslate translated = asynchMeshGroupTransforms[meshGroupToMoveIndex];
-						translated.translation *= Matrix4X4.CreateTranslation(deltaRequired);
-						asynchMeshGroupTransforms[meshGroupToMoveIndex] = translated;
+						asyncMeshGroupTransforms[meshGroupToMoveIndex] *= Matrix4X4.CreateTranslation(deltaRequired);
 						PartHasBeenChanged();
 					}
 				}
 			}
 
 			// now put all the meshes into just one group
-			MeshGroup meshGroupWeAreKeeping = asynchMeshGroups[SelectedMeshGroupIndex];
-			for (int meshGroupToMoveIndex = asynchMeshGroups.Count - 1; meshGroupToMoveIndex >= 0; meshGroupToMoveIndex--)
+			MeshGroup meshGroupWeAreKeeping = asyncMeshGroups[SelectedMeshGroupIndex];
+			for (int meshGroupToMoveIndex = asyncMeshGroups.Count - 1; meshGroupToMoveIndex >= 0; meshGroupToMoveIndex--)
 			{
-				MeshGroup meshGroupToMove = asynchMeshGroups[meshGroupToMoveIndex];
+				MeshGroup meshGroupToMove = asyncMeshGroups[meshGroupToMoveIndex];
 				if (meshGroupToMove != meshGroupWeAreKeeping)
 				{
 					// move all the meshes into the new aligned mesh group
@@ -120,47 +94,62 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 						meshGroupWeAreKeeping.Meshes.Add(mesh);
 					}
 
-					asynchMeshGroups.RemoveAt(meshGroupToMoveIndex);
-					asynchMeshGroupTransforms.RemoveAt(meshGroupToMoveIndex);
+					asyncMeshGroups.RemoveAt(meshGroupToMoveIndex);
+					asyncMeshGroupTransforms.RemoveAt(meshGroupToMoveIndex);
 				}
 			}
 
-			asynchPlatingDatas.Clear();
-			double ratioPerMeshGroup = 1.0 / asynchMeshGroups.Count;
+			asyncPlatingDatas.Clear();
+			double ratioPerMeshGroup = 1.0 / asyncMeshGroups.Count;
 			double currentRatioDone = 0;
-			for (int i = 0; i < asynchMeshGroups.Count; i++)
+			for (int i = 0; i < asyncMeshGroups.Count; i++)
 			{
 				PlatingMeshGroupData newInfo = new PlatingMeshGroupData();
-				asynchPlatingDatas.Add(newInfo);
+				asyncPlatingDatas.Add(newInfo);
 
-				MeshGroup meshGroup = asynchMeshGroups[i];
+				MeshGroup meshGroup = asyncMeshGroups[i];
 
 				// create the selection info
-				PlatingHelper.CreateITraceableForMeshGroup(asynchPlatingDatas, asynchMeshGroups, i, (double progress0To1, string processingState, out bool continueProcessing) =>
+				PlatingHelper.CreateITraceableForMeshGroup(asyncPlatingDatas, asyncMeshGroups, i, (double progress0To1, string processingState, out bool continueProcessing) =>
 				{
-					BackgroundWorker_ProgressChanged(progress0To1, processingState, out continueProcessing);
+					ReportProgressChanged(progress0To1, processingState, out continueProcessing);
 				});
 
 				currentRatioDone += ratioPerMeshGroup;
 			}
 		}
 
-		private void alignSelectedBackgroundWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+		private async void AlignToSelectedMeshGroup()
 		{
-			if (WidgetHasBeenClosed)
+			if (MeshGroups.Count > 0)
 			{
-				return;
+				// set the progress label text
+				processingProgressControl.PercentComplete = 0;
+				processingProgressControl.Visible = true;
+				string makingCopyLabel = LocalizedString.Get("Aligning");
+				string makingCopyLabelFull = string.Format("{0}:", makingCopyLabel);
+				processingProgressControl.ProcessType = makingCopyLabelFull;
+
+				LockEditControls();
+				viewIsInEditModePreLock = true;
+
+				await Task.Run((System.Action)AlignSelected);
+
+				if (HasBeenClosed)
+				{
+					return;
+				}
+
+				// remove the original mesh and replace it with these new meshes
+				PullMeshGroupDataFromAsynchLists();
+
+				// our selection changed to the mesh we just added which is at the end
+				SelectedMeshGroupIndex = MeshGroups.Count - 1;
+
+				UnlockEditControls();
+
+				Invalidate();
 			}
-
-			// remove the original mesh and replace it with these new meshes
-			PullMeshGroupDataFromAsynchLists();
-
-			// our selection changed to the mesh we just added which is at the end
-			SelectedMeshGroupIndex = MeshGroups.Count - 1;
-
-			UnlockEditControls();
-
-			Invalidate();
 		}
 	}
 }

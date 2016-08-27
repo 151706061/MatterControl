@@ -30,6 +30,7 @@ either expressed or implied, of the FreeBSD Project.
 using MatterHackers.Agg;
 using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
+using MatterHackers.MatterControl.CustomWidgets;
 using MatterHackers.MatterControl.PrinterCommunication;
 using MatterHackers.VectorMath;
 using System;
@@ -42,8 +43,11 @@ namespace MatterHackers.MatterControl
 		private RGBA_Bytes completeColor = new RGBA_Bytes(255, 255, 255);
 		private TextWidget printTimeRemaining;
 		private TextWidget printTimeElapsed;
-
+		private event EventHandler unregisterEvents;
 		private bool widgetIsExtended;
+		private Agg.Image.ImageBuffer upImageBuffer;
+		private Agg.Image.ImageBuffer downImageBuffer;
+		private ImageWidget indicatorWidget;
 
 		public bool WidgetIsExtended
 		{
@@ -60,19 +64,13 @@ namespace MatterHackers.MatterControl
 		{
 			if (!WidgetIsExtended)
 			{
-				this.Height = 48;
 				indicatorWidget.Image = downImageBuffer;
 			}
 			else
 			{
-				this.Height = 24;
 				indicatorWidget.Image = upImageBuffer;
 			}
 		}
-
-		private Agg.Image.ImageBuffer upImageBuffer;
-		private Agg.Image.ImageBuffer downImageBuffer;
-		private ImageWidget indicatorWidget;
 
 		public PrintProgressBar(bool widgetIsExtended = true)
 		{
@@ -89,23 +87,20 @@ namespace MatterHackers.MatterControl
 			printTimeElapsed = new TextWidget("", pointSize: 11);
 			printTimeElapsed.Printer.DrawFromHintedCache = true;
 			printTimeElapsed.AutoExpandBoundsToText = true;
-			printTimeElapsed.VAnchor = Agg.UI.VAnchor.ParentCenter;
+			printTimeElapsed.VAnchor = VAnchor.ParentCenter;
 
 			printTimeRemaining = new TextWidget("", pointSize: 11);
 			printTimeRemaining.Printer.DrawFromHintedCache = true;
 			printTimeRemaining.AutoExpandBoundsToText = true;
-			printTimeRemaining.VAnchor = Agg.UI.VAnchor.ParentCenter;
-
-			GuiWidget spacer = new GuiWidget();
-			spacer.HAnchor = Agg.UI.HAnchor.ParentLeftRight;
+			printTimeRemaining.VAnchor = VAnchor.ParentCenter;
 
 			container.AddChild(printTimeElapsed);
-			container.AddChild(spacer);
+			container.AddChild(new HorizontalSpacer());
 			container.AddChild(printTimeRemaining);
 
 			AddChild(container);
 
-			if (ActiveTheme.Instance.IsTouchScreen)
+			if (UserSettings.Instance.IsTouchScreen)
 			{
 				upImageBuffer = StaticData.Instance.LoadIcon("TouchScreen/arrow_up_32x24.png");
 				downImageBuffer = StaticData.Instance.LoadIcon("TouchScreen/arrow_down_32x24.png");
@@ -123,39 +118,31 @@ namespace MatterHackers.MatterControl
 				AddChild(indicatorOverlay);
 			}
 
-			ClickWidget clickOverlay = new ClickWidget();
+			var clickOverlay = new GuiWidget();
 			clickOverlay.AnchorAll();
-			clickOverlay.Click += onProgressBarClick;
-
+			clickOverlay.Click += (s, e) =>
+			{
+				// In touchscreen mode, expand or collapse the print status row when clicked
+				ApplicationView mainView = ApplicationController.Instance.MainView;
+				if(mainView is TouchscreenView)
+				{
+					((TouchscreenView)mainView).ToggleTopContainer();
+				}
+			};
 			AddChild(clickOverlay);
 
-			AddHandlers();
+			PrinterConnectionAndCommunication.Instance.ActivePrintItemChanged.RegisterEvent(Instance_PrintItemChanged, ref unregisterEvents);
+			PrinterConnectionAndCommunication.Instance.CommunicationStateChanged.RegisterEvent(Instance_PrintItemChanged, ref unregisterEvents);
+			ActiveTheme.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
+
 			SetThemedColors();
 			UpdatePrintStatus();
 			UiThread.RunOnIdle(OnIdle);
 		}
 
-		private event EventHandler unregisterEvents;
-
-		private void AddHandlers()
-		{
-			PrinterConnectionAndCommunication.Instance.ActivePrintItemChanged.RegisterEvent(Instance_PrintItemChanged, ref unregisterEvents);
-			PrinterConnectionAndCommunication.Instance.CommunicationStateChanged.RegisterEvent(Instance_PrintItemChanged, ref unregisterEvents);
-			ActiveTheme.Instance.ThemeChanged.RegisterEvent(ThemeChanged, ref unregisterEvents);
-		}
-
-		public void onProgressBarClick(object sender, EventArgs e)
-		{
-			ApplicationController.Instance.MainView.ToggleTopContainer();
-		}
-
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
-
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
 		}
 
@@ -178,12 +165,12 @@ namespace MatterHackers.MatterControl
 			UpdatePrintStatus();
 		}
 
-		private void OnIdle(object state)
+		private void OnIdle()
 		{
 			currentPercent = PrinterConnectionAndCommunication.Instance.PercentComplete;
 			UpdatePrintStatus();
 
-			if (!WidgetHasBeenClosed)
+			if (!HasBeenClosed)
 			{
 				UiThread.RunOnIdle(OnIdle, 1);
 			}

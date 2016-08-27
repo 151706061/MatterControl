@@ -32,12 +32,38 @@ using MatterHackers.PolygonMesh;
 using System.ComponentModel;
 using System.Globalization;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.PartPreviewWindow
 {
 	public partial class View3DWidget
 	{
-		private void MakeCopyOfGroup()
+		private void CopyGroup()
+		{
+			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+
+			PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DO_COPY);
+
+			MeshGroup meshGroupToCopy = asyncMeshGroups[SelectedMeshGroupIndex];
+			MeshGroup copyMeshGroup = new MeshGroup();
+			double meshCount = meshGroupToCopy.Meshes.Count;
+			for (int i = 0; i < meshCount; i++)
+			{
+				Mesh mesh = asyncMeshGroups[SelectedMeshGroupIndex].Meshes[i];
+				copyMeshGroup.Meshes.Add(Mesh.Copy(mesh, (double progress0To1, string processingState, out bool continueProcessing) =>
+				{
+					ReportProgressChanged(progress0To1, processingState, out continueProcessing);
+				}));
+			}
+
+			PlatingHelper.FindPositionForGroupAndAddToPlate(copyMeshGroup, SelectedMeshGroupTransform, asyncPlatingDatas, asyncMeshGroups, asyncMeshGroupTransforms);
+			PlatingHelper.CreateITraceableForMeshGroup(asyncPlatingDatas, asyncMeshGroups, asyncMeshGroups.Count - 1, null);
+
+			bool continueProcessing2;
+			ReportProgressChanged(.95, "", out continueProcessing2);
+		}
+
+		private async void MakeCopyOfGroup()
 		{
 			if (MeshGroups.Count > 0
 				&& SelectedMeshGroupIndex != -1)
@@ -49,56 +75,21 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				processingProgressControl.PercentComplete = 0;
 				LockEditControls();
 
-				BackgroundWorker copyGroupBackgroundWorker = null;
-				copyGroupBackgroundWorker = new BackgroundWorker();
+				await Task.Run((System.Action)CopyGroup);
 
-				copyGroupBackgroundWorker.DoWork += new DoWorkEventHandler(copyGroupBackgroundWorker_DoWork);
-				copyGroupBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(copyGroupBackgroundWorker_RunWorkerCompleted);
-
-				copyGroupBackgroundWorker.RunWorkerAsync();
-			}
-		}
-
-		private void copyGroupBackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
-		{
-			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-			BackgroundWorker backgroundWorker = (BackgroundWorker)sender;
-
-			PushMeshGroupDataToAsynchLists(TraceInfoOpperation.DO_COPY);
-
-			MeshGroup meshGroupToCopy = asynchMeshGroups[SelectedMeshGroupIndex];
-			MeshGroup copyMeshGroup = new MeshGroup();
-			double meshCount = meshGroupToCopy.Meshes.Count;
-			for (int i = 0; i < meshCount; i++)
-			{
-				Mesh mesh = asynchMeshGroups[SelectedMeshGroupIndex].Meshes[i];
-				copyMeshGroup.Meshes.Add(Mesh.Copy(mesh, (double progress0To1, string processingState, out bool continueProcessing) =>
+				if (HasBeenClosed)
 				{
-					BackgroundWorker_ProgressChanged(progress0To1, processingState, out continueProcessing);
-				}));
+					return;
+				}
+
+				UnlockEditControls();
+				PullMeshGroupDataFromAsynchLists();
+				PartHasBeenChanged();
+
+				// now set the selection to the new copy
+				SelectedMeshGroupIndex = MeshGroups.Count - 1;
+				UndoBuffer.Add(new CopyUndoCommand(this, SelectedMeshGroupIndex));
 			}
-
-			PlatingHelper.FindPositionForGroupAndAddToPlate(copyMeshGroup, SelectedMeshGroupTransform, asynchPlatingDatas, asynchMeshGroups, asynchMeshGroupTransforms);
-			PlatingHelper.CreateITraceableForMeshGroup(asynchPlatingDatas, asynchMeshGroups, asynchMeshGroups.Count - 1, null);
-
-			bool continueProcessing2;
-			BackgroundWorker_ProgressChanged(.95, "", out continueProcessing2);
-		}
-
-		private void copyGroupBackgroundWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-		{
-			if (WidgetHasBeenClosed)
-			{
-				return;
-			}
-
-			UnlockEditControls();
-			PullMeshGroupDataFromAsynchLists();
-			PartHasBeenChanged();
-
-			// now set the selection to the new copy
-			MeshGroupExtraData[MeshGroups.Count - 1].currentScale = MeshGroupExtraData[SelectedMeshGroupIndex].currentScale;
-			SelectedMeshGroupIndex = MeshGroups.Count - 1;
 		}
 	}
 }

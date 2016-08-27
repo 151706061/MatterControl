@@ -27,73 +27,76 @@ of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 */
 
+using MatterHackers.Agg.UI;
+using MatterHackers.MatterControl.PrintLibrary.Provider;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using MatterHackers.VectorMath;
 
 namespace MatterHackers.MatterControl.DataStorage
 {
+	public class ApplicationSession : Entity
+	{
+		public ApplicationSession()
+			: base()
+		{
+			SessionStart = DateTime.Now;
+			PrintCount = 0;
+		}
+
+		public int PrintCount { get; set; }
+
+		public DateTime SessionEnd { get; set; }
+
+		public DateTime SessionStart { get; set; }
+	}
+
+	public class CustomCommands : Entity
+	{
+		public DateTime DateLastModified { get; set; }
+
+		public string Name { get; set; }
+
+		[Indexed]
+		public int PrinterId { get; set; }
+
+		public string Value { get; set; }
+
+		public override void Commit()
+		{
+			DateLastModified = DateTime.Now;
+			base.Commit();
+		}
+	}
+
 	public class Entity
 	{
-		[PrimaryKey, AutoIncrement]
-		public int Id { get; set; }
-
-		protected bool isSaved;
 		protected int hashCode = 0;
 
-		public event PropertyChangedEventHandler PropertyChanged;
+		protected bool isSaved;
+
+		private static readonly int maxRetries = 20;
 
 		private IEnumerable<PropertyInfo> properties;
+
+		private int retryCount = 0;
 
 		public Entity()
 		{
 			isSaved = false;
 		}
 
-		private static readonly int maxRetries = 20;
-		private int retryCount = 0;
+		public event PropertyChangedEventHandler PropertyChanged;
 
-		private void TryHandleInsert()
-		{
-			retryCount++;
-			try
-			{
-				if (retryCount < maxRetries)
-				{
-					Datastore.Instance.dbSQLite.Insert(this);
-				}
-			}
-			catch (Exception)
-			{
-				Thread.Sleep(100);
-				this.TryHandleInsert();
-			}
-
-			retryCount = 0;
-		}
-
-		private void TryHandleUpdate()
-		{
-			retryCount++;
-			try
-			{
-				if (retryCount < maxRetries)
-				{
-					Datastore.Instance.dbSQLite.Update(this);
-				}
-			}
-			catch (Exception)
-			{
-				Thread.Sleep(100);
-				this.TryHandleUpdate();
-			}
-
-			retryCount = 0;
-		}
+		[PrimaryKey, AutoIncrement]
+		public int Id { get; set; }
 
 		public virtual void Commit()
 		{
@@ -111,16 +114,6 @@ namespace MatterHackers.MatterControl.DataStorage
 		public void Delete()
 		{
 			Datastore.Instance.dbSQLite.Delete(this);
-		}
-
-		protected void OnPropertyChanged(string name)
-		{
-			PropertyChangedEventHandler handler = PropertyChanged;
-			this.hashCode = 0;
-			if (handler != null)
-			{
-				handler(this, new PropertyChangedEventArgs(name));
-			}
 		}
 
 		public override int GetHashCode()
@@ -157,42 +150,130 @@ namespace MatterHackers.MatterControl.DataStorage
 
 			return this.hashCode;
 		}
-	}
 
-	public class ApplicationSession : Entity
-	{
-		public DateTime SessionStart { get; set; }
-
-		public DateTime SessionEnd { get; set; }
-
-		public int PrintCount { get; set; }
-
-		public ApplicationSession()
-			: base()
+		protected void OnPropertyChanged(string name)
 		{
-			SessionStart = DateTime.Now;
-			PrintCount = 0;
+			PropertyChangedEventHandler handler = PropertyChanged;
+			this.hashCode = 0;
+			if (handler != null)
+			{
+				handler(this, new PropertyChangedEventArgs(name));
+			}
+		}
+
+		private void TryHandleInsert()
+		{
+			retryCount++;
+			try
+			{
+				if (retryCount < maxRetries)
+				{
+					Datastore.Instance.dbSQLite.Insert(this);
+				}
+			}
+			catch (Exception)
+			{
+				GuiWidget.BreakInDebugger();
+				Thread.Sleep(100);
+				this.TryHandleInsert();
+			}
+
+			retryCount = 0;
+		}
+
+		private void TryHandleUpdate()
+		{
+			retryCount++;
+			try
+			{
+				if (retryCount < maxRetries)
+				{
+					Datastore.Instance.dbSQLite.Update(this);
+				}
+			}
+			catch (Exception)
+			{
+				GuiWidget.BreakInDebugger();
+				Thread.Sleep(100);
+				this.TryHandleUpdate();
+			}
+
+			retryCount = 0;
 		}
 	}
 
-	public class PrintItemCollection : Entity
+	public class Printer : Entity
 	{
+		public Printer()
+			: base()
+		{
+			this.Make = "Unknown";
+			this.Model = "Unknown";
+		}
+
+		// features
+		public string _features { get; set; }
+
+		public bool AutoConnect { get; set; }
+
+		public string BaudRate { get; set; }
+
+		public string ComPort { get; set; }
+
+		public string CurrentSlicingEngine { get; set; }
+
+		public int DefaultSettingsCollectionId { get; set; }
+
+		public string DeviceToken { get; set; }
+
+		//Auto connect to printer (if available)
+		public string DeviceType { get; set; }
+
+		// all the data about print leveling
+		public bool DoPrintLeveling { get; set; }
+
+		public string DriverType { get; set; }
+
+		public string Make { get; set; }
+
+		public string ManualMovementSpeeds { get; set; }
+
+		// stored x,value,y,value,z,value,e1,value,e2,value,e3,value,...
+		public string MaterialCollectionIds { get; set; }
+
+		public string Model { get; set; }
+
 		public string Name { get; set; }
+
+		public string PrintLevelingJsonData { get; set; }
+
+		public string PrintLevelingProbePositions { get; set; } // this is deprecated go through PrintLevelingData
+
+		// store id1,id2... (for N extruders)
+
+		public int QualityCollectionId { get; set; }
+	}
+
+	public class PrinterSetting : Entity
+	{
+		public DateTime DateLastModified { get; set; }
+
+		public string Name { get; set; }
+
+		[Indexed]
+		public int PrinterId { get; set; }
+
+		public string Value { get; set; }
+
+		public override void Commit()
+		{
+			DateLastModified = DateTime.Now;
+			base.Commit();
+		}
 	}
 
 	public class PrintItem : Entity
 	{
-		[Indexed]
-		public int PrintItemCollectionID { get; set; }
-
-		public string Name { get; set; }
-
-		public string FileLocation { get; set; }
-
-		public DateTime DateAdded { get; set; }
-
-		public int PrintCount { get; set; }
-
 		public PrintItem()
 			: this("", "")
 		{
@@ -206,34 +287,59 @@ namespace MatterHackers.MatterControl.DataStorage
 			DateAdded = DateTime.Now;
 			PrintCount = 0;
 		}
-	}
 
-	public class SliceSettingsCollection : Entity
-	{
+		public DateTime DateAdded { get; set; }
+
+		public string FileLocation { get; set; }
+
 		public string Name { get; set; }
 
-		public string Tag { get; set; } //ex. 'material' or 'quality'
+		public int PrintCount { get; set; }
 
-		public int PrinterId { get; set; }
-	}
-
-	public class SliceSetting : Entity
-	{
 		[Indexed]
-		public int SettingsCollectionId { get; set; }
+		public int PrintItemCollectionID { get; set; }
 
-		public string Name { get; set; }
+		public bool ReadOnly { get; set; }
 
-		public string Value { get; set; }
+		public bool Protected { get; set; }
+	}
 
-		public SliceSetting()
-			: base()
+	public class PrintItemCollection : Entity
+	{
+		public PrintItemCollection()
 		{
 		}
+
+		public PrintItemCollection(string name, string collectionKey)
+		{
+			this.Name = name;
+			Key = collectionKey;
+		}
+
+		public string Key { get; set; }
+
+		public string Name { get; set; }
+
+		[Indexed]
+		public int ParentCollectionID { get; set; }
 	}
 
 	public class PrintTask : Entity
 	{
+		public PrintTask()
+			: base()
+		{
+			PrintStart = DateTime.Now;
+		}
+
+		public string PrintingGCodeFileName { get; set; }
+
+		public double PercentDone { get; set; }
+
+		public bool PrintComplete { get; set; }
+
+		public DateTime PrintEnd { get; set; }
+
 		[Indexed]
 		public int PrinterId { get; set; }
 
@@ -244,18 +350,6 @@ namespace MatterHackers.MatterControl.DataStorage
 
 		public DateTime PrintStart { get; set; }
 
-		public DateTime PrintEnd { get; set; }
-
-		public int PrintTimeSeconds { get; set; }
-
-		public bool PrintComplete { get; set; }
-
-		public PrintTask()
-			: base()
-		{
-			PrintStart = DateTime.Now;
-		}
-
 		public int PrintTimeMinutes
 		{
 			get
@@ -265,6 +359,11 @@ namespace MatterHackers.MatterControl.DataStorage
 				return (int)(printTimeSpan.TotalMinutes + .5);
 			}
 		}
+
+		public int PrintTimeSeconds { get; set; }
+		public float PrintingOffsetX { get; set; }
+		public float PrintingOffsetY { get; set; }
+		public float PrintingOffsetZ { get; set; }
 
 		public override void Commit()
 		{
@@ -277,14 +376,38 @@ namespace MatterHackers.MatterControl.DataStorage
 		}
 	}
 
+	public class SliceSetting : Entity
+	{
+		public SliceSetting()
+			: base()
+		{
+		}
+
+		public string Name { get; set; }
+
+		[Indexed]
+		public int SettingsCollectionId { get; set; }
+
+		public string Value { get; set; }
+	}
+
+	public class SliceSettingsCollection : Entity
+	{
+		public string Name { get; set; }
+
+		public int PrinterId { get; set; }
+
+		public string Tag { get; set; } //ex. 'material' or 'quality'
+	}
+
 	public class SystemSetting : Entity
 	{
+		public DateTime DateLastModified { get; set; }
+
 		[Indexed]
 		public string Name { get; set; }
 
 		public string Value { get; set; }
-
-		public DateTime DateLastModified { get; set; }
 
 		public override void Commit()
 		{
@@ -295,96 +418,12 @@ namespace MatterHackers.MatterControl.DataStorage
 
 	public class UserSetting : Entity
 	{
+		public DateTime DateLastModified { get; set; }
+
 		[Indexed]
 		public string Name { get; set; }
 
 		public string Value { get; set; }
-
-		public DateTime DateLastModified { get; set; }
-
-		public override void Commit()
-		{
-			DateLastModified = DateTime.Now;
-			base.Commit();
-		}
-	}
-
-	public class CustomCommands : Entity
-	{
-		[Indexed]
-		public int PrinterId { get; set; }
-
-		public string Name { get; set; }
-
-		public string Value { get; set; }
-
-		public DateTime DateLastModified { get; set; }
-
-		public override void Commit()
-		{
-			DateLastModified = DateTime.Now;
-			base.Commit();
-		}
-	}
-
-	public class Printer : Entity
-	{
-		public int DefaultSettingsCollectionId { get; set; }
-
-		public string Name { get; set; }
-
-		public string Make { get; set; }
-
-		public string Model { get; set; }
-
-		public string ComPort { get; set; }
-
-		public string DriverType { get; set; }
-
-		public string BaudRate { get; set; }
-
-		public bool AutoConnectFlag { get; set; } //Auto connect to printer (if available)
-
-		public string DeviceToken { get; set; }
-
-		public string DeviceType { get; set; }
-
-		// all the data about print leveling
-		public bool DoPrintLeveling { get; set; }
-
-		public string PrintLevelingJsonData { get; set; }
-
-		public string PrintLevelingProbePositions { get; set; } // this is depricated go through PrintLevelingData
-
-		// features
-		public string _features { get; set; }
-
-		public string ManualMovementSpeeds { get; set; } // stored x,value,y,value,z,value,e1,value,e2,value,e3,value,...
-
-		public string CurrentSlicingEngine { get; set; }
-
-		public string MaterialCollectionIds { get; set; } // store id1,id2... (for N extruders)
-
-		public int QualityCollectionId { get; set; }
-
-		public Printer()
-			: base()
-		{
-			this.Make = "Unknown";
-			this.Model = "Unknown";
-		}
-	}
-
-	public class PrinterSetting : Entity
-	{
-		[Indexed]
-		public int PrinterId { get; set; }
-
-		public string Name { get; set; }
-
-		public string Value { get; set; }
-
-		public DateTime DateLastModified { get; set; }
 
 		public override void Commit()
 		{

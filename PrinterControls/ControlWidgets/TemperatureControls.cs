@@ -21,19 +21,10 @@ namespace MatterHackers.MatterControl.PrinterControls
 			mainContainer.HAnchor = HAnchor.ParentLeftRight;
 			mainContainer.Margin = new BorderDouble(left: 0);
 
-			TextWidget subheader = new TextWidget("Temporarily override target temperature", pointSize: 8, textColor: ActiveTheme.Instance.PrimaryTextColor);
-			subheader.Margin = new BorderDouble(bottom: 6);
-			mainContainer.AddChild(subheader);
-
 			temperatureGroupBox.AddChild(mainContainer);
 			RGBA_Bytes separatorLineColor = new RGBA_Bytes(ActiveTheme.Instance.PrimaryTextColor, 100);
 
-			int numberOfHeatedExtruders = 1;
-			if (!ActiveSliceSettings.Instance.ExtrudersShareTemperature)
-			{
-				numberOfHeatedExtruders = ActiveSliceSettings.Instance.ExtruderCount;
-			}
-
+			int numberOfHeatedExtruders = ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count);
 			if (numberOfHeatedExtruders > 1)
 			{
 				for (int i = 0; i < numberOfHeatedExtruders; i++)
@@ -57,7 +48,7 @@ namespace MatterHackers.MatterControl.PrinterControls
 			BedTemperatureControlWidget = new DisableableWidget();
 			BedTemperatureControlWidget.AddChild(new BedTemperatureControlWidget());
 
-			if (ActiveSliceSettings.Instance.HasHeatedBed())
+			if (ActiveSliceSettings.Instance.GetValue<bool>(SettingsKey.has_heated_bed))
 			{
 				mainContainer.AddChild(BedTemperatureControlWidget);
 			}

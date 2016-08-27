@@ -40,19 +40,14 @@ namespace MatterHackers.MatterControl.ActionBar
 		public TemperatureWidgetBed()
 			: base("150.3°")
 		{
-			labelTextWidget.Text = "Print Bed";
-			AddHandlers();
+			temperatureTypeName.Text = "Print Bed";
 			setToCurrentTemperature();
+			ToolTipText = "Current bed temperature".Localize();
+			preheatButton.ToolTipText = "Preheat the Bed".Localize();
+			PrinterConnectionAndCommunication.Instance.BedTemperatureRead.RegisterEvent(onTemperatureRead, ref unregisterEvents);
 		}
 
 		private event EventHandler unregisterEvents;
-
-		private void AddHandlers()
-		{
-			PrinterConnectionAndCommunication.Instance.BedTemperatureRead.RegisterEvent(onTemperatureRead, ref unregisterEvents);
-			this.MouseEnterBounds += onMouseEnterBounds;
-			this.MouseLeaveBounds += onMouseLeaveBounds;
-		}
 
 		public override void OnClosed(EventArgs e)
 		{
@@ -61,16 +56,6 @@ namespace MatterHackers.MatterControl.ActionBar
 				unregisterEvents(this, null);
 			}
 			base.OnClosed(e);
-		}
-
-		private void onMouseEnterBounds(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.ShowHoverText(LocalizedString.Get("Bed Temperature"));
-		}
-
-		private void onMouseLeaveBounds(Object sender, EventArgs e)
-		{
-			HelpTextWidget.Instance.HideHoverText();
 		}
 
 		private void setToCurrentTemperature()
@@ -101,7 +86,7 @@ namespace MatterHackers.MatterControl.ActionBar
 
 		protected override void SetTargetTemperature()
 		{
-			double targetTemp = ActiveSliceSettings.Instance.BedTemperature;
+			double targetTemp = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.bed_temperature);
 			if (targetTemp != 0)
 			{
 				double goalTemp = (int)(targetTemp + .5);

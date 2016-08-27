@@ -33,6 +33,7 @@ using MatterHackers.Agg.UI;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.PrintQueue;
 using MatterHackers.MatterControl.SlicerConfiguration;
+using MatterHackers.MeshVisualizer;
 using MatterHackers.VectorMath;
 using System;
 using System.IO;
@@ -46,7 +47,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private View3DWidget partPreviewView;
 		private ViewGcodeBasic viewGcodeBasic;
 		private TabControl tabControl;
-		private TabPage layerView;
+		private Tab layerViewTab;
 		private View3DWidget.AutoRotate autoRotate3DView;
 		private View3DWidget.OpenMode openMode;
 		private View3DWidget.WindowMode windowMode;
@@ -72,7 +73,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		public void Reload(PrintItemWrapper printItem)
 		{
-			this.RemoveAllChildren();
+			this.CloseAllChildren();
 			this.Load(printItem);
 		}
 
@@ -84,7 +85,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			tabControl.TabBar.Padding = new BorderDouble(top: 6);
 
 			RGBA_Bytes selectedTabColor;
-			if (ActiveTheme.Instance.DisplayMode == ActiveTheme.ApplicationDisplayType.Responsive)
+			if (UserSettings.Instance.DisplayMode == ApplicationDisplayType.Responsive)
 			{
 				tabControl.TabBar.BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 				selectedTabColor = ActiveTheme.Instance.TabLabelSelected;
@@ -95,25 +96,18 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				selectedTabColor = ActiveTheme.Instance.SecondaryAccentColor;
 			}
 
-			double buildHeight = ActiveSliceSettings.Instance.BuildHeight;
+			double buildHeight = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.build_height);
 
 			// put in the 3D view
-			string part3DViewLabelFull = string.Format("{0} {1} ", "3D", "View".Localize()).ToUpper();
-
 			partPreviewView = new View3DWidget(printItem,
-				new Vector3(ActiveSliceSettings.Instance.BedSize, buildHeight),
-				ActiveSliceSettings.Instance.BedCenter,
-				ActiveSliceSettings.Instance.BedShape,
+				new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size), buildHeight),
+				ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center),
+				ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape),
 				windowMode,
 				autoRotate3DView,
 				openMode);
 
-			partPreviewView.Closed += (sender, e) =>
-			{
-				Close();
-			};
-
-			TabPage partPreview3DView = new TabPage(partPreviewView, part3DViewLabelFull);
+			TabPage partPreview3DView = new TabPage(partPreviewView, string.Format("3D {0} ", "View".Localize()).ToUpper());
 
 			// put in the gcode view
 			ViewGcodeBasic.WindowMode gcodeWindowMode = ViewGcodeBasic.WindowMode.Embeded;
@@ -123,47 +117,53 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			}
 
 			viewGcodeBasic = new ViewGcodeBasic(printItem,
-				new Vector3(ActiveSliceSettings.Instance.BedSize, buildHeight),
-				ActiveSliceSettings.Instance.BedCenter,
-				ActiveSliceSettings.Instance.BedShape, gcodeWindowMode);
+				new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size), buildHeight),
+				ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center),
+				ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape), gcodeWindowMode);
 
-			viewGcodeBasic.Closed += (sender, e) =>
+			if (windowMode == View3DWidget.WindowMode.StandAlone)
 			{
-				Close();
-			};
+				partPreviewView.Closed += (s, e) => Close();
+				viewGcodeBasic.Closed += (s, e) => Close();
+			}
 
-			layerView = new TabPage(viewGcodeBasic, LocalizedString.Get("Layer View").ToUpper());
+			TabPage layerView = new TabPage(viewGcodeBasic, LocalizedString.Get("Layer View").ToUpper());
 
 			int tabPointSize = 16;
-			// add the correct tabs based on wether we are stand alone or embeded
-			if (windowMode == View3DWidget.WindowMode.StandAlone || OsInformation.OperatingSystem == OSType.Android)
+            // add the correct tabs based on whether we are stand alone or embedded
+            Tab threeDViewTab;
+            if (windowMode == View3DWidget.WindowMode.StandAlone || OsInformation.OperatingSystem == OSType.Android)
 			{
-				tabControl.AddTab(new SimpleTextTabWidget(partPreview3DView, "3D View Tab", tabPointSize,
-					selectedTabColor, new RGBA_Bytes(), ActiveTheme.Instance.TabLabelUnselected, new RGBA_Bytes()));
-				tabControl.AddTab(new SimpleTextTabWidget(layerView, "Layer View Tab", tabPointSize,
-					selectedTabColor, new RGBA_Bytes(), ActiveTheme.Instance.TabLabelUnselected, new RGBA_Bytes()));
+                threeDViewTab = new SimpleTextTabWidget(partPreview3DView, "3D View Tab", tabPointSize,
+                    selectedTabColor, new RGBA_Bytes(), ActiveTheme.Instance.TabLabelUnselected, new RGBA_Bytes());
+                tabControl.AddTab(threeDViewTab);
+                layerViewTab = new SimpleTextTabWidget(layerView, "Layer View Tab", tabPointSize,
+                    selectedTabColor, new RGBA_Bytes(), ActiveTheme.Instance.TabLabelUnselected, new RGBA_Bytes());
+                tabControl.AddTab(layerViewTab);
 			}
 			else
 			{
-				tabControl.AddTab(new PopOutTextTabWidget(partPreview3DView, "3D View Tab", new Vector2(590, 400), tabPointSize));
-				tabControl.AddTab(new PopOutTextTabWidget(layerView, "Layer View Tab", new Vector2(590, 400), tabPointSize));
+                threeDViewTab = new PopOutTextTabWidget(partPreview3DView, "3D View Tab", new Vector2(590, 400), tabPointSize);
+                tabControl.AddTab(threeDViewTab);
+				layerViewTab = new PopOutTextTabWidget(layerView, "Layer View Tab", new Vector2(590, 400), tabPointSize);
+				tabControl.AddTab(layerViewTab);
 			}
 
-			this.AddChild(tabControl);
+            threeDViewTab.ToolTipText = "Preview 3D Design".Localize();
+            layerViewTab.ToolTipText = "Preview layer Tool Paths".Localize();
+
+            this.AddChild(tabControl);
 		}
 
 		public void SwitchToGcodeView()
 		{
-			tabControl.TabBar.SwitchToPage(layerView);
+			tabControl.TabBar.SelectTab(layerViewTab);
 			viewGcodeBasic.Focus();
 		}
 
 		public override void OnClosed(EventArgs e)
 		{
-			if (unregisterEvents != null)
-			{
-				unregisterEvents(this, null);
-			}
+			unregisterEvents?.Invoke(this, null);
 			base.OnClosed(e);
 		}
 	}

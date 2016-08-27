@@ -29,7 +29,7 @@ namespace MatterHackers.MatterControl
 		public bool AllowThemeToAdjustImage = true;
 		private string imageName;
 
-		public double FixedHeight = 30 * TextWidget.GlobalPointSizeScaleRatio;
+		public double FixedHeight = 30 * GuiWidget.DeviceScale;
 
 		public SplitButtonFactory()
 		{
@@ -40,6 +40,11 @@ namespace MatterHackers.MatterControl
 			this.imageName = imageName;
 
 			DynamicDropDownMenu menu = CreateMenu(direction);
+			if(buttonList.Count > 1)
+			{
+				menu.Name = buttonList[1].Item1 + " Menu";
+			}
+
 			menu.Margin = new BorderDouble();
 			Button button = CreateButton(buttonList[0]);
 

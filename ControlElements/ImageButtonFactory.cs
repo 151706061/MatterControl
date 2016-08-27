@@ -28,6 +28,7 @@ either expressed or implied, of the FreeBSD Project.
 */
 
 using MatterHackers.Agg;
+using MatterHackers.Agg.Image;
 using MatterHackers.Agg.ImageProcessing;
 using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
@@ -38,12 +39,19 @@ namespace MatterHackers.MatterControl
 {
 	public class ImageButtonFactory
 	{
-		public bool invertImageColor = true;
+		public bool InvertImageColor { get; set; } = true;
 
 		public static CheckBox CreateToggleSwitch(bool initialState)
 		{
-			ToggleSwitchView toggleView = new ToggleSwitchView("On".Localize(), "Off".Localize(),
-				60, 24,
+			string on = "On";
+			string off = "Off";
+			if (StaticData.Instance != null)
+			{
+				on = on.Localize();
+				off = off.Localize();
+			}
+			ToggleSwitchView toggleView = new ToggleSwitchView(on, off,
+				60 * GuiWidget.DeviceScale, 24 * GuiWidget.DeviceScale,
 				ActiveTheme.Instance.PrimaryBackgroundColor,
 				new RGBA_Bytes(220, 220, 220),
 				ActiveTheme.Instance.PrimaryAccentColor,
@@ -55,6 +63,11 @@ namespace MatterHackers.MatterControl
 
 		public Button Generate(string normalImageName, string hoverImageName, string pressedImageName = null, string disabledImageName = null)
 		{
+			if (hoverImageName == null)
+			{
+				hoverImageName = normalImageName;
+			}
+
 			if (pressedImageName == null)
 			{
 				pressedImageName = hoverImageName;
@@ -65,24 +78,37 @@ namespace MatterHackers.MatterControl
 				disabledImageName = normalImageName;
 			}
 
-			Agg.Image.ImageBuffer normalImage = StaticData.Instance.LoadIcon(normalImageName);
-			Agg.Image.ImageBuffer pressedImage = StaticData.Instance.LoadIcon(pressedImageName);
-			Agg.Image.ImageBuffer hoverImage = StaticData.Instance.LoadIcon(hoverImageName);
-			Agg.Image.ImageBuffer disabledImage = StaticData.Instance.LoadIcon(disabledImageName);
+			ImageBuffer normalImage = StaticData.Instance.LoadIcon(normalImageName);
+			ImageBuffer pressedImage = StaticData.Instance.LoadIcon(pressedImageName);
+			ImageBuffer hoverImage = StaticData.Instance.LoadIcon(hoverImageName);
+			ImageBuffer disabledImage = StaticData.Instance.LoadIcon(disabledImageName);
 
-			if (!ActiveTheme.Instance.IsDarkTheme && invertImageColor)
+			return Generate(normalImage, pressedImage, hoverImage, disabledImage);
+		}
+
+		public Button Generate(ImageBuffer normalImage, ImageBuffer hoverImage, ImageBuffer pressedImage = null, ImageBuffer disabledImage = null)
+		{
+			if(hoverImage == null)
 			{
-				InvertLightness.DoInvertLightness(normalImage);
-				InvertLightness.DoInvertLightness(pressedImage);
-				InvertLightness.DoInvertLightness(hoverImage);
-				InvertLightness.DoInvertLightness(disabledImage);
+				hoverImage = normalImage;
 			}
 
-			if (ActiveTheme.Instance.IsTouchScreen)
+			if (pressedImage == null)
 			{
-				//normalImage.NewGraphics2D().Line(0, 0, normalImage.Width, normalImage.Height, RGBA_Bytes.Violet);
-				RoundedRect rect = new RoundedRect(pressedImage.GetBounds(), 0);
-				pressedImage.NewGraphics2D().Render(new Stroke(rect, 3), ActiveTheme.Instance.PrimaryTextColor);
+				pressedImage = hoverImage;
+			}
+
+			if (disabledImage == null)
+			{
+				disabledImage = normalImage;
+			}
+
+			if (!ActiveTheme.Instance.IsDarkTheme && InvertImageColor)
+			{
+				normalImage.InvertLightness();
+				pressedImage.InvertLightness();
+				hoverImage.InvertLightness();
+				disabledImage.InvertLightness();
 			}
 
 			ButtonViewStates buttonViewWidget = new ButtonViewStates(

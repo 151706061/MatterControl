@@ -29,8 +29,10 @@ either expressed or implied, of the FreeBSD Project.
 
 using MatterHackers.Agg;
 using MatterHackers.Agg.UI;
+using MatterHackers.GCodeVisualizer;
 using MatterHackers.Localizations;
 using MatterHackers.MatterControl.PrinterCommunication;
+using MatterHackers.MatterControl.SlicerConfiguration;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
@@ -112,6 +114,18 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 		private static Vector3 probeRead1;
 		private static Vector3 probeRead2;
 
+		public static string ApplyLeveling(string lineBeingSent, Vector3 currentDestination, PrinterMachineInstruction.MovementTypes movementMode)
+		{
+			var settings = ActiveSliceSettings.Instance;
+			if (settings?.GetValue<bool>("print_leveling_enabled") == true
+				&& (lineBeingSent.StartsWith("G0 ") || lineBeingSent.StartsWith("G1 ")))
+			{
+				lineBeingSent = PrintLevelingPlane.Instance.ApplyLeveling(currentDestination, movementMode, lineBeingSent);
+			}
+
+			return lineBeingSent;
+		}
+
 		public static List<string> ProcessCommand(string lineBeingSent)
 		{
 			int commentIndex = lineBeingSent.IndexOf(';');
@@ -140,7 +154,7 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 				}
 				if (PrinterConnectionAndCommunication.Instance.CommunicationState == PrinterConnectionAndCommunication.CommunicationStates.Printing)
 				{
-					ActivePrinterProfile.Instance.DoPrintLeveling = false;
+					ActiveSliceSettings.Instance.Helpers.DoPrintLeveling(false);
 				}
 
 				probeIndex = 0;
@@ -148,8 +162,7 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 				StringBuilder commands = new StringBuilder();
 
-				double zFeedRate = InstructionsPage.ManualControlsFeedRate().z;
-				double xyFeedRate = InstructionsPage.ManualControlsFeedRate().x;
+				var feedRates = ActiveSliceSettings.Instance.Helpers.ManualMovementSpeeds();
 
 				// make sure the probe offset is set to 0
 				lines.Add("M565 Z0");
@@ -157,10 +170,10 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 				// probe position 0
 				probeRead0 = new Vector3(probeFrontLeft, probeStartZHeight);
 				// up in z
-				lines.Add("G1 F{0}".FormatWith(zFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.z));
 				lines.Add("G1 {0}{1}".FormatWith("Z", probeStartZHeight));
 				// move to xy
-				lines.Add("G1 F{0}".FormatWith(xyFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.x));
 				lines.Add("G1 X{0}Y{1}Z{2}".FormatWith(probeFrontLeft.x, probeFrontLeft.y, probeStartZHeight));
 				// probe
 				lines.Add("G30");
@@ -168,10 +181,10 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 				// probe position 1
 				probeRead1 = new Vector3(probeFrontRight, probeStartZHeight);
 				// up in z
-				lines.Add("G1 F{0}".FormatWith(zFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.z));
 				lines.Add("G1 {0}{1}".FormatWith("Z", probeStartZHeight));
 				// move to xy
-				lines.Add("G1 F{0}".FormatWith(xyFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.x));
 				lines.Add("G1 X{0}Y{1}Z{2}".FormatWith(probeFrontRight.x, probeFrontRight.y, probeStartZHeight));
 				// probe
 				lines.Add("G30");
@@ -179,10 +192,10 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 				// probe position 2
 				probeRead2 = new Vector3(probeBackLeft, probeStartZHeight);
 				// up in z
-				lines.Add("G1 F{0}".FormatWith(zFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.z));
 				lines.Add("G1 {0}{1}".FormatWith("Z", probeStartZHeight));
 				// move to xy
-				lines.Add("G1 F{0}".FormatWith(xyFeedRate));
+				lines.Add("G1 F{0}".FormatWith(feedRates.x));
 				lines.Add("G1 X{0}Y{1}Z{2}".FormatWith(probeBackLeft.x, probeBackLeft.y, probeStartZHeight));
 				// probe
 				lines.Add("G30");
@@ -235,14 +248,15 @@ namespace MatterHackers.MatterControl.ConfigurationPage.PrintLeveling
 
 		private static void SetEquations()
 		{
-			PrintLevelingData levelingData = PrintLevelingData.GetForPrinter(ActivePrinterProfile.Instance.ActivePrinter);
+			PrintLevelingData levelingData = ActiveSliceSettings.Instance.Helpers.GetPrintLevelingData();
 
 			// position 0 does not change as it is the distance from the switch trigger to the extruder tip.
 			//levelingData.sampledPosition0 = levelingData.sampledPosition0;
-			levelingData.sampledPosition1 = levelingData.sampledPosition0 + probeRead1;
-			levelingData.sampledPosition2 = levelingData.sampledPosition0 + probeRead2;
+			levelingData.SampledPosition1 = levelingData.SampledPosition0 + probeRead1;
+			levelingData.SampledPosition2 = levelingData.SampledPosition0 + probeRead2;
 
-			ActivePrinterProfile.Instance.DoPrintLeveling = true;
+			ActiveSliceSettings.Instance.Helpers.SetPrintLevelingData(levelingData);
+			ActiveSliceSettings.Instance.Helpers.DoPrintLeveling(true);
 		}
 	}
 }

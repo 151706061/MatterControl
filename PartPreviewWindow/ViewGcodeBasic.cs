@@ -28,6 +28,8 @@ either expressed or implied, of the FreeBSD Project.
 */
 
 using MatterHackers.Agg;
+using MatterHackers.Agg.ImageProcessing;
+using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
 using MatterHackers.GCodeVisualizer;
 using MatterHackers.Localizations;
@@ -67,11 +69,11 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private CheckBox expandModelOptions;
 		private CheckBox expandDisplayOptions;
 		private CheckBox syncToPrint;
-        private CheckBox showSpeeds;
+		private CheckBox showSpeeds;
 
 		private GuiWidget gcodeDisplayWidget;
 
-        private ColorGradientWidget gradient;
+		private ColorGradientWidget gradientWidget;
 
 		private EventHandler unregisterEvents;
 		private WindowMode windowMode;
@@ -85,10 +87,10 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private Vector2 bedCenter;
 		private Vector3 viewerVolume;
-		private MeshViewerWidget.BedShape bedShape;
+		private BedShape bedShape;
 		private int sliderWidth;
 
-		public ViewGcodeBasic(PrintItemWrapper printItem, Vector3 viewerVolume, Vector2 bedCenter, MeshViewerWidget.BedShape bedShape, WindowMode windowMode)
+		public ViewGcodeBasic(PrintItemWrapper printItem, Vector3 viewerVolume, Vector2 bedCenter, BedShape bedShape, WindowMode windowMode)
 		{
 			this.viewerVolume = viewerVolume;
 			this.bedShape = bedShape;
@@ -96,7 +98,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			this.windowMode = windowMode;
 			this.printItem = printItem;
 
-			if (ActiveTheme.Instance.DisplayMode == ActiveTheme.ApplicationDisplayType.Touchscreen)
+			if (UserSettings.Instance.DisplayMode == ApplicationDisplayType.Touchscreen)
 			{
 				sliderWidth = 20;
 			}
@@ -105,20 +107,58 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				sliderWidth = 10;
 			}
 
-			CreateAndAddChildren(null);
+			CreateAndAddChildren();
 
-			SliceSettingsWidget.RegisterForSettingsChange("bed_size", RecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("print_center", RecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("build_height", RecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("bed_shape", RecreateBedAndPartPosition, ref unregisterEvents);
-			SliceSettingsWidget.RegisterForSettingsChange("center_part_on_bed", RecreateBedAndPartPosition, ref unregisterEvents);
+			SliceSettingsWidget.SettingChanged.RegisterEvent(CheckSettingChanged, ref unregisterEvents);
+			ApplicationController.Instance.AdvancedControlsPanelReloading.RegisterEvent((s, e) => ClearGCode(), ref unregisterEvents);
 
-			SliceSettingsWidget.RegisterForSettingsChange("extruder_offset", Clear3DGCode, ref unregisterEvents);
-
-			ActivePrinterProfile.Instance.ActivePrinterChanged.RegisterEvent(RecreateBedAndPartPosition, ref unregisterEvents);
+			ActiveSliceSettings.ActivePrinterChanged.RegisterEvent(CheckSettingChanged, ref unregisterEvents);
 		}
 
-		private void Clear3DGCode(object sender, EventArgs e)
+		private void CheckSettingChanged(object sender, EventArgs e)
+		{
+			StringEventArgs stringEvent = e as StringEventArgs;
+			if (stringEvent != null)
+			{
+				if (gcodeViewWidget?.LoadedGCode != null
+					&& (
+					stringEvent.Data == SettingsKey.filament_cost
+					|| stringEvent.Data == SettingsKey.filament_diameter
+					|| stringEvent.Data == SettingsKey.filament_density)
+					)
+				{
+					UpdateMassText();
+					UpdateEstimatedCost();
+				}
+
+				if (stringEvent.Data == SettingsKey.bed_size
+					|| stringEvent.Data == SettingsKey.print_center
+					|| stringEvent.Data == SettingsKey.build_height
+					|| stringEvent.Data == SettingsKey.bed_shape
+					|| stringEvent.Data == SettingsKey.center_part_on_bed)
+				{
+					viewerVolume = new Vector3(ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.bed_size), ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.build_height));
+					bedShape = ActiveSliceSettings.Instance.GetValue<BedShape>(SettingsKey.bed_shape);
+					bedCenter = ActiveSliceSettings.Instance.GetValue<Vector2>(SettingsKey.print_center);
+
+					double buildHeight = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.build_height);
+
+					UiThread.RunOnIdle(() =>
+					{
+						meshViewerWidget.CreatePrintBed(
+							viewerVolume,
+							bedCenter,
+							bedShape);
+					});
+				}
+				else if(stringEvent.Data == "extruder_offset")
+				{
+					ClearGCode();
+				}
+			}
+		}
+
+		private void ClearGCode()
 		{
 			if (gcodeViewWidget != null
 				&& gcodeViewWidget.gCodeRenderer != null)
@@ -128,24 +168,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			}
 		}
 
-		private void RecreateBedAndPartPosition(object sender, EventArgs e)
-		{
-			viewerVolume = new Vector3(ActiveSliceSettings.Instance.BedSize, ActiveSliceSettings.Instance.BuildHeight);
-			bedShape = ActiveSliceSettings.Instance.BedShape;
-			bedCenter = ActiveSliceSettings.Instance.BedCenter;
-
-			double buildHeight = ActiveSliceSettings.Instance.BuildHeight;
-
-			UiThread.RunOnIdle((state) =>
-			{
-				meshViewerWidget.CreatePrintBed(
-					viewerVolume,
-					bedCenter,
-					bedShape);
-			});
-		}
-
-		private void CreateAndAddChildren(object state)
+		private void CreateAndAddChildren()
 		{
 			TextImageButtonFactory textImageButtonFactory = new TextImageButtonFactory();
 			textImageButtonFactory.normalTextColor = ActiveTheme.Instance.PrimaryTextColor;
@@ -153,7 +176,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			textImageButtonFactory.disabledTextColor = ActiveTheme.Instance.PrimaryTextColor;
 			textImageButtonFactory.pressedTextColor = ActiveTheme.Instance.PrimaryTextColor;
 
-			CloseAndRemoveAllChildren();
+			CloseAllChildren();
 			gcodeViewWidget = null;
 			gcodeProcessingStateInfoText = null;
 
@@ -167,6 +190,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			buttonBottomPanel.BackgroundColor = ActiveTheme.Instance.PrimaryBackgroundColor;
 
 			generateGCodeButton = textImageButtonFactory.Generate(LocalizedString.Get("Generate"));
+			generateGCodeButton.Name = "Generate Gcode Button";
 			generateGCodeButton.Click += new EventHandler(generateButton_Click);
 			buttonBottomPanel.AddChild(generateGCodeButton);
 
@@ -191,10 +215,11 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			centerPartPreviewAndControls.AnchorAll();
 
 			gcodeDisplayWidget = new GuiWidget(HAnchor.ParentLeftRight, Agg.UI.VAnchor.ParentBottomTop);
-			String firstProcessingMessage = "Press 'Add' to select an item.".Localize();
+			string firstProcessingMessage = "Press 'Add' to select an item.".Localize();
+
 			if (printItem != null)
 			{
-				firstProcessingMessage = LocalizedString.Get("Loading GCode...");
+				firstProcessingMessage = "Loading G-Code...".Localize();
 				if (Path.GetExtension(printItem.FileLocation).ToUpper() == ".GCODE")
 				{
 					gcodeDisplayWidget.AddChild(CreateGCodeViewWidget(printItem.FileLocation));
@@ -221,8 +246,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 						}
 
 						// we only hook these up to make sure we can regenerate the gcode when we want
-						printItem.SlicingOutputMessage.RegisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-						printItem.SlicingDone.RegisterEvent(sliceItem_Done, ref unregisterEvents);
+						printItem.SlicingOutputMessage += sliceItem_SlicingOutputMessage;
+						printItem.SlicingDone += sliceItem_Done;
 					}
 					else
 					{
@@ -260,10 +285,21 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			viewControls2D = new ViewControls2D();
 			AddChild(viewControls2D);
 
+			viewControls2D.ResetView += (sender, e) =>
+			{
+				SetDefaultView2D();
+			};
+
 			viewControls3D = new ViewControls3D(meshViewerWidget);
 			viewControls3D.PartSelectVisible = false;
 			AddChild(viewControls3D);
-			viewControls3D.rotateButton.ClickButton(null);
+
+			viewControls3D.ResetView += (sender, e) =>
+			{
+				meshViewerWidget.ResetView();
+			};
+
+			viewControls3D.ActiveButton = ViewControls3DButtons.Rotate;
 			viewControls3D.Visible = false;
 
 			viewControlsToggle = new ViewControlsToggle();
@@ -273,13 +309,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			//viewControls3D.translateButton.ClickButton(null);
 
-			// move things into the right place and scale
-			{
-				Vector3 bedCenter3D = new Vector3(bedCenter, 0);
-				meshViewerWidget.PrinterBed.Translate(bedCenter3D);
-				meshViewerWidget.TrackballTumbleWidget.TrackBallController.Scale = .05;
-				meshViewerWidget.TrackballTumbleWidget.TrackBallController.Translate(-bedCenter3D);
-			}
+			meshViewerWidget.ResetView();
 
 			viewControls2D.translateButton.Click += (sender, e) =>
 			{
@@ -291,6 +321,11 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			};
 
 			AddHandlers();
+		}
+
+		private void SetDefaultView2D()
+		{
+			gcodeViewWidget.CenterPartInView();
 		}
 
 		private RenderType GetRenderType()
@@ -308,11 +343,15 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			{
 				renderType |= RenderType.SpeedColors;
 			}
-			if (gcodeViewWidget.SimulateExtrusion)
-			{
-				renderType |= RenderType.SimulateExtrusion;
-			}
-			if (gcodeViewWidget.HideExtruderOffsets)
+            if (gcodeViewWidget.SimulateExtrusion)
+            {
+                renderType |= RenderType.SimulateExtrusion;
+            }
+            if (gcodeViewWidget.TransparentExtrusion)
+            {
+                renderType |= RenderType.TransparentExtrusion;
+            }
+            if (gcodeViewWidget.HideExtruderOffsets)
 			{
 				renderType |= RenderType.HideExtruderOffsets;
 			}
@@ -331,7 +370,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				GetRenderType(),
 				gcodeViewWidget.FeatureToStartOnRatio0To1,
 				gcodeViewWidget.FeatureToEndOnRatio0To1,
-				new Vector2[] { ActiveSliceSettings.Instance.GetOffset(0), ActiveSliceSettings.Instance.GetOffset(1) });
+				new Vector2[] { ActiveSliceSettings.Instance.Helpers.ExtruderOffset(0), ActiveSliceSettings.Instance.Helpers.ExtruderOffset(1) });
 
 			gcodeViewWidget.gCodeRenderer.Render3D(renderInfo);
 		}
@@ -359,7 +398,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			buttonRightPanel.Width = 200;
 			{
 				string label = "Model".Localize().ToUpper();
-				expandModelOptions = expandMenuOptionFactory.GenerateCheckBoxButton(label, "icon_arrow_right_no_border_32x32.png", "icon_arrow_down_no_border_32x32.png");
+				expandModelOptions = ExpandMenuOptionFactory.GenerateCheckBoxButton(label, StaticData.Instance.LoadIcon("icon_arrow_right_no_border_32x32.png", 32, 32).InvertLightness());
 				expandModelOptions.Margin = new BorderDouble(bottom: 2);
 				buttonRightPanel.AddChild(expandModelOptions);
 				expandModelOptions.Checked = true;
@@ -369,7 +408,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				//modelOptionsContainer.Visible = false;
 				buttonRightPanel.AddChild(modelOptionsContainer);
 
-				expandDisplayOptions = expandMenuOptionFactory.GenerateCheckBoxButton("Display".Localize().ToUpper(), "icon_arrow_right_no_border_32x32.png", "icon_arrow_down_no_border_32x32.png");
+				expandDisplayOptions = ExpandMenuOptionFactory.GenerateCheckBoxButton("Display".Localize().ToUpper(), StaticData.Instance.LoadIcon("icon_arrow_right_no_border_32x32.png", 32, 32).InvertLightness());
 				expandDisplayOptions.Margin = new BorderDouble(bottom: 2);
 				buttonRightPanel.AddChild(expandDisplayOptions);
 				expandDisplayOptions.Checked = false;
@@ -401,19 +440,19 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void AddModelInfo(FlowLayoutWidget buttonPanel)
 		{
-			buttonPanel.CloseAndRemoveAllChildren();
+			buttonPanel.CloseAllChildren();
 
 			double oldWidth = textImageButtonFactory.FixedWidth;
-			textImageButtonFactory.FixedWidth = 44 * TextWidget.GlobalPointSizeScaleRatio;
+			textImageButtonFactory.FixedWidth = 44 * GuiWidget.DeviceScale;
 
 			FlowLayoutWidget modelInfoContainer = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			modelInfoContainer.HAnchor = HAnchor.ParentLeftRight;
 			modelInfoContainer.Padding = new BorderDouble(5);
 
-			string printTimeLabel = "Print Time".Localize().ToUpper();
+			string printTimeLabel = "Print Time".Localize();
 			string printTimeLabelFull = string.Format("{0}:", printTimeLabel);
 			// put in the print time
-			modelInfoContainer.AddChild(new TextWidget(printTimeLabelFull, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 10));
+			modelInfoContainer.AddChild(new TextWidget(printTimeLabelFull, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 9));
 			{
 				string timeRemainingText = "---";
 
@@ -441,12 +480,12 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			//modelInfoContainer.AddChild(new TextWidget("Size:", textColor: ActiveTheme.Instance.PrimaryTextColor));
 
-			string filamentLengthLabel = "Filament Length".Localize().ToUpper();
+			string filamentLengthLabel = "Filament Length".Localize();
 			string filamentLengthLabelFull = string.Format("{0}:", filamentLengthLabel);
 			// show the filament used
 			modelInfoContainer.AddChild(new TextWidget(filamentLengthLabelFull, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 9));
 			{
-				double filamentUsed = gcodeViewWidget.LoadedGCode.GetFilamentUsedMm(ActiveSliceSettings.Instance.NozzleDiameter);
+				double filamentUsed = gcodeViewWidget.LoadedGCode.GetFilamentUsedMm(ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_diameter));
 
 				GuiWidget estimatedPrintTime = new TextWidget(string.Format("{0:0.0} mm", filamentUsed), pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor);
 				//estimatedPrintTime.HAnchor = Agg.UI.HAnchor.ParentLeft;
@@ -454,52 +493,118 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				modelInfoContainer.AddChild(estimatedPrintTime);
 			}
 
-			string filamentVolumeLabel = "Filament Volume".Localize().ToUpper();
+			string filamentVolumeLabel = "Filament Volume".Localize();
 			string filamentVolumeLabelFull = string.Format("{0}:", filamentVolumeLabel);
 			modelInfoContainer.AddChild(new TextWidget(filamentVolumeLabelFull, textColor: ActiveTheme.Instance.PrimaryTextColor, pointSize: 9));
 			{
-				double filamentMm3 = gcodeViewWidget.LoadedGCode.GetFilamentCubicMm(ActiveSliceSettings.Instance.FilamentDiameter);
+				double filamentMm3 = gcodeViewWidget.LoadedGCode.GetFilamentCubicMm(ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_diameter));
 
-				GuiWidget estimatedPrintTime = new TextWidget(string.Format("{0:0.00} cm3", filamentMm3 / 1000), pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor);
+				GuiWidget estimatedPrintTime = new TextWidget(string.Format("{0:0.00} cm³", filamentMm3 / 1000), pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor);
 				//estimatedPrintTime.HAnchor = Agg.UI.HAnchor.ParentLeft;
 				estimatedPrintTime.Margin = new BorderDouble(0, 9, 0, 3);
 				modelInfoContainer.AddChild(estimatedPrintTime);
 			}
 
-			string weightLabel = "Est. Weight".Localize().ToUpper();
-			string weightLabelFull = string.Format("{0}:", weightLabel);
-			modelInfoContainer.AddChild(new TextWidget(weightLabelFull, pointSize: 9, textColor: ActiveTheme.Instance.PrimaryTextColor));
-			{
-				var density = 1.0;
-				string filamentType = "PLA";
-				if (filamentType == "ABS")
-				{
-					density = 1.04;
-				}
-				else if (filamentType == "PLA")
-				{
-					density = 1.24;
-				}
+			modelInfoContainer.AddChild(GetEstimatedMassInfo());
+			modelInfoContainer.AddChild(GetEstimatedCostInfo());
 
-				double filamentWeightGrams = gcodeViewWidget.LoadedGCode.GetFilamentWeightGrams(ActiveSliceSettings.Instance.FilamentDiameter, density);
-
-				GuiWidget estimatedPrintTime = new TextWidget(string.Format("{0:0.00} g", filamentWeightGrams), pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor);
-				//estimatedPrintTime.HAnchor = Agg.UI.HAnchor.ParentLeft;
-				estimatedPrintTime.Margin = new BorderDouble(0, 9, 0, 3);
-				modelInfoContainer.AddChild(estimatedPrintTime);
-			}
-
-			//modelInfoContainer.AddChild(new TextWidget("Layer Count:", textColor: ActiveTheme.Instance.PrimaryTextColor));
+			PrinterConnectionAndCommunication.Instance.CommunicationStateChanged.RegisterEvent(HookUpGCodeMessagesWhenDonePrinting, ref unregisterEvents);
 
 			buttonPanel.AddChild(modelInfoContainer);
 
 			textImageButtonFactory.FixedWidth = oldWidth;
 		}
 
+		double totalMass
+		{
+			get
+			{
+				double filamentDiameter = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_diameter);
+				double filamentDensity = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_density);
+
+				return gcodeViewWidget.LoadedGCode.GetFilamentWeightGrams(filamentDiameter, filamentDensity);
+			}
+		}
+
+		double totalCost
+		{
+			get
+			{
+				double filamentCost = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_cost);
+				return totalMass / 1000 * filamentCost;
+			}
+		}
+
+		TextWidget massTextWidget;
+
+		void UpdateMassText()
+		{
+			if (totalMass != 0)
+			{
+				massTextWidget.Text = string.Format("{0:0.00} g", totalMass);
+			}
+			else
+			{
+				massTextWidget.Text = "Unknown";
+			}
+		}
+
+		private GuiWidget GetEstimatedMassInfo()
+		{
+			FlowLayoutWidget estimatedMassInfo = new FlowLayoutWidget(FlowDirection.TopToBottom);
+			string massLabel = "Estimated Mass".Localize();
+			string massLabelFull = string.Format("{0}:", massLabel);
+			estimatedMassInfo.AddChild(new TextWidget(massLabelFull, pointSize: 9, textColor: ActiveTheme.Instance.PrimaryTextColor));
+			massTextWidget = new TextWidget("", pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor)
+			{
+				AutoExpandBoundsToText = true,
+			};
+			massTextWidget.Margin = new BorderDouble(0, 9, 0, 3);
+			estimatedMassInfo.AddChild(massTextWidget);
+
+			UpdateMassText();
+
+			return estimatedMassInfo;
+		}
+
+		FlowLayoutWidget estimatedCostInfo;
+		TextWidget costTextWidget;
+
+		void UpdateEstimatedCost()
+		{
+			costTextWidget.Text = string.Format("${0:0.00}", totalCost);
+			if (totalCost == 0)
+			{
+				estimatedCostInfo.Visible = false;
+			}
+			else
+			{
+				estimatedCostInfo.Visible = true;
+			}
+		}
+
+		private GuiWidget GetEstimatedCostInfo()
+		{
+			estimatedCostInfo = new FlowLayoutWidget(FlowDirection.TopToBottom);
+			string costLabel = "Estimated Cost".Localize();
+			string costLabelFull = string.Format("{0}:", costLabel);
+			estimatedCostInfo.AddChild(new TextWidget(costLabelFull, pointSize: 9, textColor: ActiveTheme.Instance.PrimaryTextColor));
+			costTextWidget = new TextWidget("", pointSize: 14, textColor: ActiveTheme.Instance.PrimaryTextColor)
+			{
+				AutoExpandBoundsToText = true,
+			};
+			costTextWidget.Margin = new BorderDouble(0, 9, 0, 3);
+			estimatedCostInfo.AddChild(costTextWidget);
+
+			UpdateEstimatedCost();
+
+			return estimatedCostInfo;
+		}
+
 		private void AddLayerInfo(FlowLayoutWidget buttonPanel)
 		{
 			double oldWidth = textImageButtonFactory.FixedWidth;
-			textImageButtonFactory.FixedWidth = 44 * TextWidget.GlobalPointSizeScaleRatio;
+			textImageButtonFactory.FixedWidth = 44 * GuiWidget.DeviceScale;
 
 			FlowLayoutWidget layerInfoContainer = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			layerInfoContainer.HAnchor = HAnchor.ParentLeftRight;
@@ -522,10 +627,10 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void AddDisplayControls(FlowLayoutWidget buttonPanel)
 		{
-			buttonPanel.CloseAndRemoveAllChildren();
+			buttonPanel.CloseAllChildren();
 
 			double oldWidth = textImageButtonFactory.FixedWidth;
-			textImageButtonFactory.FixedWidth = 44 * TextWidget.GlobalPointSizeScaleRatio;
+			textImageButtonFactory.FixedWidth = 44 * GuiWidget.DeviceScale;
 
 			FlowLayoutWidget layerInfoContainer = new FlowLayoutWidget(FlowDirection.TopToBottom);
 			layerInfoContainer.HAnchor = HAnchor.ParentLeftRight;
@@ -533,7 +638,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			// put in a show grid check box
 			{
-				CheckBox showGrid = new CheckBox(LocalizedString.Get("Grid"), textColor: ActiveTheme.Instance.PrimaryTextColor);
+				CheckBox showGrid = new CheckBox(LocalizedString.Get("Print Bed"), textColor: ActiveTheme.Instance.PrimaryTextColor);
 				showGrid.Checked = gcodeViewWidget.RenderGrid;
 				meshViewerWidget.RenderBed = showGrid.Checked;
 				showGrid.CheckedStateChanged += (sender, e) =>
@@ -568,25 +673,23 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			// put in a show speed checkbox
 			{
-                showSpeeds = new CheckBox(LocalizedString.Get("Speeds"), textColor: ActiveTheme.Instance.PrimaryTextColor);
+				showSpeeds = new CheckBox(LocalizedString.Get("Speeds"), textColor: ActiveTheme.Instance.PrimaryTextColor);
 				showSpeeds.Checked = gcodeViewWidget.RenderSpeeds;
-                //showSpeeds.Checked = gradient.Visible;
+				//showSpeeds.Checked = gradient.Visible;
 				showSpeeds.CheckedStateChanged += (sender, e) =>
 				{
-                    
-                   /* if (!showSpeeds.Checked)
-                    {
-                        gradient.Visible = false;
-                    }
-                    else
-                    {
-                        gradient.Visible = true;
-                    }*/
-                     
-                    gradient.Visible = showSpeeds.Checked;
+					/* if (!showSpeeds.Checked)
+					 {
+						 gradient.Visible = false;
+					 }
+					 else
+					 {
+						 gradient.Visible = true;
+					 }*/
+
+					gradientWidget.Visible = showSpeeds.Checked;
 
 					gcodeViewWidget.RenderSpeeds = showSpeeds.Checked;
-                   
 				};
 
 				layerInfoContainer.AddChild(showSpeeds);
@@ -603,8 +706,24 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				layerInfoContainer.AddChild(simulateExtrusion);
 			}
 
-			// put in a simulate extrusion checkbox
-			if (ActiveSliceSettings.Instance.ExtruderCount > 1)
+            // put in a render extrusion transparent checkbox
+            {
+                CheckBox transparentExtrusion = new CheckBox(LocalizedString.Get("Transparent"), textColor: ActiveTheme.Instance.PrimaryTextColor)
+                {
+                    Checked = gcodeViewWidget.TransparentExtrusion,
+                    Margin = new BorderDouble(5, 0, 0, 0),
+                    HAnchor = HAnchor.ParentLeft,
+                };
+
+                transparentExtrusion.CheckedStateChanged += (sender, e) =>
+                {
+                    gcodeViewWidget.TransparentExtrusion = transparentExtrusion.Checked;
+                };
+                layerInfoContainer.AddChild(transparentExtrusion);
+            }
+
+            // put in a simulate extrusion checkbox
+            if (ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count) > 1)
 			{
 				CheckBox hideExtruderOffsets = new CheckBox("Hide Offsets", textColor: ActiveTheme.Instance.PrimaryTextColor);
 				hideExtruderOffsets.Checked = gcodeViewWidget.HideExtruderOffsets;
@@ -646,17 +765,14 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				if (PrinterConnectionAndCommunication.Instance.PrinterIsPrinting
 					&& PrinterConnectionAndCommunication.Instance.ActivePrintItem == printItem)
 				{
-					printItem.SlicingOutputMessage.UnregisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-					printItem.SlicingDone.UnregisterEvent(sliceItem_Done, ref unregisterEvents);
+					printItem.SlicingOutputMessage -= sliceItem_SlicingOutputMessage;
+					printItem.SlicingDone -= sliceItem_Done;
 
 					generateGCodeButton.Visible = false;
 
 					// However if the print finished or is canceled we are going to want to get updates again. So, hook the status event
 					PrinterConnectionAndCommunication.Instance.CommunicationStateChanged.RegisterEvent(HookUpGCodeMessagesWhenDonePrinting, ref unregisterEvents);
-					UiThread.RunOnIdle((state) =>
-					{
-						SetSyncToPrintVisibility();
-					});
+					UiThread.RunOnIdle(SetSyncToPrintVisibility);
 				}
 			}
 
@@ -723,12 +839,12 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			if (!PrinterConnectionAndCommunication.Instance.PrinterIsPaused && !PrinterConnectionAndCommunication.Instance.PrinterIsPrinting)
 			{
 				// unregister first to make sure we don't double up in error (should not be needed but no harm)
-				printItem.SlicingOutputMessage.UnregisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-				printItem.SlicingDone.UnregisterEvent(sliceItem_Done, ref unregisterEvents);
+				printItem.SlicingOutputMessage -= sliceItem_SlicingOutputMessage;
+				printItem.SlicingDone -= sliceItem_Done;
 
 				// register for done slicing and slicing messages
-				printItem.SlicingOutputMessage.RegisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-				printItem.SlicingDone.RegisterEvent(sliceItem_Done, ref unregisterEvents);
+				printItem.SlicingOutputMessage += sliceItem_SlicingOutputMessage;
+				printItem.SlicingDone += sliceItem_Done;
 
 				generateGCodeButton.Visible = true;
 			}
@@ -857,7 +973,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void LoadingProgressChanged(object sender, ProgressChangedEventArgs e)
 		{
-			SetProcessingMessage(string.Format("Loading GCode {0}%...", e.ProgressPercentage));
+			SetProcessingMessage(string.Format("{0} {1}%...", "Loading G-Code".Localize(), e.ProgressPercentage));
 		}
 
 		private void CloseIfNotNull(GuiWidget widget)
@@ -884,7 +1000,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			if (gcodeViewWidget != null
 				&& gcodeViewWidget.LoadedGCode == null)
 			{
-				// If we have finished loading the gcode and the source file exists but we don't have any loaded gcode it is because the loaded decided to not load it.
+				// If we have finished loading the gcode and the source file exists but we don't have any loaded gcode it is because the loader decided to not load it.
 				if (File.Exists(printItem.FileLocation))
 				{
 					SetProcessingMessage(string.Format(fileTooBigToLoad, printItem.Name));
@@ -899,16 +1015,13 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				&& gcodeViewWidget.LoadedGCode != null
 				&& gcodeViewWidget.LoadedGCode.LineCount > 0)
 			{
-
-                CloseIfNotNull(gradient);
-                gradient = new ColorGradientWidget(gcodeViewWidget.LoadedGCode);
-                AddChild(gradient);
-                gradient.Visible = false;
-
-                
+				CloseIfNotNull(gradientWidget);
+				gradientWidget = new ColorGradientWidget(gcodeViewWidget.LoadedGCode);
+				AddChild(gradientWidget);
+				gradientWidget.Visible = false;
 
 				CreateOptionsContent();
-                setGradientVisibility();
+				setGradientVisibility();
 				buttonRightPanel.Visible = true;
 				viewControlsToggle.Visible = true;
 
@@ -936,9 +1049,6 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				layerRenderRatioSlider.SecondValueChanged += new EventHandler(layerEndRenderRatioSlider_ValueChanged);
 				AddChild(layerRenderRatioSlider);
 
-                
-              
-
 				SetSliderSizes();
 
 				// let's change the active layer so that it is set to the first layer with data
@@ -951,20 +1061,17 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			}
 		}
 
-        private void setGradientVisibility()
-        {
-            if (showSpeeds.Checked)
-            {
-                gradient.Visible = true;
-            }
-            else
-            {
-                gradient.Visible = false;
-            }
-
-            
-
-        }
+		private void setGradientVisibility()
+		{
+			if (showSpeeds.Checked)
+			{
+				gradientWidget.Visible = true;
+			}
+			else
+			{
+				gradientWidget.Visible = false;
+			}
+		}
 
 		private void layerStartRenderRatioSlider_ValueChanged(object sender, EventArgs e)
 		{
@@ -1048,8 +1155,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 			if (printItem != null)
 			{
-				printItem.SlicingOutputMessage.UnregisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-				printItem.SlicingDone.UnregisterEvent(sliceItem_Done, ref unregisterEvents);
+				printItem.SlicingOutputMessage -= sliceItem_SlicingOutputMessage;
+				printItem.SlicingDone -= sliceItem_Done;
 				if (startedSliceFromGenerateButton && printItem.CurrentlySlicing)
 				{
 					SlicingQueue.Instance.CancelCurrentSlicing();
@@ -1066,11 +1173,18 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void DoGenerateButton_Click(object state)
 		{
-			if (ActiveSliceSettings.Instance.IsValid() && printItem != null)
+			if (PrinterConnectionAndCommunication.Instance.ActivePrinter != null)
 			{
-				((Button)state).Visible = false;
-				SlicingQueue.Instance.QueuePartForSlicing(printItem);
-				startedSliceFromGenerateButton = true;
+				if (ActiveSliceSettings.Instance.IsValid() && printItem != null)
+				{
+					((Button)state).Visible = false;
+					SlicingQueue.Instance.QueuePartForSlicing(printItem);
+					startedSliceFromGenerateButton = true;
+				}
+			}
+			else
+			{
+				StyledMessageBox.ShowMessageBox(null, "Oops! Please select a printer in order to continue slicing.", "Select Printer", StyledMessageBox.MessageType.OK);
 			}
 		}
 
@@ -1092,8 +1206,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			// We can add this while we have it open (when we are done loading).
 			// So we need to make sure we only have it added once. This will be ok to run when
 			// not added or when added and will ensure we only have one hook.
-			printItem.SlicingOutputMessage.UnregisterEvent(sliceItem_SlicingOutputMessage, ref unregisterEvents);
-			printItem.SlicingDone.UnregisterEvent(sliceItem_Done, ref unregisterEvents);
+			printItem.SlicingOutputMessage -= sliceItem_SlicingOutputMessage;
+			printItem.SlicingDone -= sliceItem_Done;
 
 			UiThread.RunOnIdle(CreateAndAddChildren);
 			startedSliceFromGenerateButton = false;

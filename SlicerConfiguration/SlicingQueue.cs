@@ -81,7 +81,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 			}
 		}
 
-		static private SliceEngineInfo getSliceEngineInfoByType(ActivePrinterProfile.SlicingEngineTypes engineType)
+		static private SliceEngineInfo getSliceEngineInfoByType(SlicingEngineTypes engineType)
 		{
 			foreach (SliceEngineInfo info in AvailableSliceEngines)
 			{
@@ -124,7 +124,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 			string preparingToSliceModelTxt = LocalizedString.Get("Preparing to slice model");
 			string peparingToSliceModelFull = string.Format("{0}...", preparingToSliceModelTxt);
 			itemToQueue.OnSlicingOutputMessage(new StringEventArgs(peparingToSliceModelFull));
-			using (TimedLock.Lock(listOfSlicingItems, "QueuePartForSlicing"))
+			lock(listOfSlicingItems)
 			{
 				//Add to thumbnail generation queue
 				listOfSlicingItems.Add(itemToQueue);
@@ -150,7 +150,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 
 		private static string getSlicerFullPath()
 		{
-			SliceEngineInfo info = getSliceEngineInfoByType(ActivePrinterProfile.Instance.ActiveSliceEngineType);
+			SliceEngineInfo info = getSliceEngineInfoByType(ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType());
 			if (info != null)
 			{
 				return info.GetEnginePath();
@@ -164,32 +164,32 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 
 		public static List<bool> extrudersUsed = new List<bool>();
 
-		public static string[] GetStlFileLocations(string fileToSlice)
+		public static string[] GetStlFileLocations(string fileToSlice, bool doMergeInSlicer, ref string mergeRules)
 		{
 			extrudersUsed.Clear();
 
-			int extruderCount = ActiveSliceSettings.Instance.ExtruderCount;
+			int extruderCount = ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count);
 			for (int extruderIndex = 0; extruderIndex < extruderCount; extruderIndex++)
 			{
 				extrudersUsed.Add(false);
 			}
 
-			// If we have support enabled and and are using an extruder other than 0 for it
-			if (ActiveSliceSettings.Instance.SupportEnabled)
+			// If we have support enabled and are using an extruder other than 0 for it
+			if (ActiveSliceSettings.Instance.GetValue<bool>("support_material"))
 			{
-				if (ActiveSliceSettings.Instance.SupportExtruder != 0)
+				if (ActiveSliceSettings.Instance.GetValue<int>("support_material_extruder") != 0)
 				{
-					int supportExtruder = Math.Max(0, Math.Min(ActiveSliceSettings.Instance.ExtruderCount - 1, ActiveSliceSettings.Instance.SupportExtruder - 1));
+					int supportExtruder = Math.Max(0, Math.Min(ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count) - 1, ActiveSliceSettings.Instance.GetValue<int>("support_material_extruder") - 1));
 					extrudersUsed[supportExtruder] = true;
 				}
 			}
 
 			// If we have raft enabled and are using an extruder other than 0 for it
-			if (ActiveSliceSettings.Instance.RaftEnabled)
+			if (ActiveSliceSettings.Instance.GetValue<bool>("create_raft"))
 			{
-				if (ActiveSliceSettings.Instance.RaftExtruder != 0)
+				if (ActiveSliceSettings.Instance.GetValue<int>("raft_extruder") != 0)
 				{
-					int raftExtruder = Math.Max(0, Math.Min(ActiveSliceSettings.Instance.ExtruderCount - 1, ActiveSliceSettings.Instance.RaftExtruder - 1));
+					int raftExtruder = Math.Max(0, Math.Min(ActiveSliceSettings.Instance.GetValue<int>(SettingsKey.extruder_count) - 1, ActiveSliceSettings.Instance.GetValue<int>("raft_extruder") - 1));
 					extrudersUsed[raftExtruder] = true;
 				}
 			}
@@ -203,59 +203,114 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 
 				case ".AMF":
 					List<MeshGroup> meshGroups = MeshFileIo.Load(fileToSlice);
-					List<MeshGroup> extruderMeshGroups = new List<MeshGroup>();
-					for (int extruderIndex = 0; extruderIndex < extruderCount; extruderIndex++)
+					if (meshGroups != null)
 					{
-						extruderMeshGroups.Add(new MeshGroup());
-					}
-					int maxExtruderIndex = 0;
-					foreach (MeshGroup meshGroup in meshGroups)
-					{
-						foreach (Mesh mesh in meshGroup.Meshes)
+						List<MeshGroup> extruderMeshGroups = new List<MeshGroup>();
+						for (int extruderIndex = 0; extruderIndex < extruderCount; extruderIndex++)
 						{
-							MeshMaterialData material = MeshMaterialData.Get(mesh);
-							int extruderIndex = Math.Max(0, material.MaterialIndex - 1);
-							maxExtruderIndex = Math.Max(maxExtruderIndex, extruderIndex);
-							if (extruderIndex >= extruderCount)
+							extruderMeshGroups.Add(new MeshGroup());
+						}
+						int maxExtruderIndex = 0;
+						foreach (MeshGroup meshGroup in meshGroups)
+						{
+							foreach (Mesh mesh in meshGroup.Meshes)
 							{
-								extrudersUsed[0] = true;
-								extruderMeshGroups[0].Meshes.Add(mesh);
+								MeshMaterialData material = MeshMaterialData.Get(mesh);
+								int extruderIndex = Math.Max(0, material.MaterialIndex - 1);
+								maxExtruderIndex = Math.Max(maxExtruderIndex, extruderIndex);
+								if (extruderIndex >= extruderCount)
+								{
+									extrudersUsed[0] = true;
+									extruderMeshGroups[0].Meshes.Add(mesh);
+								}
+								else
+								{
+									extrudersUsed[extruderIndex] = true;
+									extruderMeshGroups[extruderIndex].Meshes.Add(mesh);
+								}
+							}
+						}
+
+						int savedStlCount = 0;
+						List<string> extruderFilesToSlice = new List<string>();
+						for (int extruderIndex = 0; extruderIndex < extruderMeshGroups.Count; extruderIndex++)
+						{
+							MeshGroup meshGroup = extruderMeshGroups[extruderIndex];
+							List<int> materialsToInclude = new List<int>();
+							materialsToInclude.Add(extruderIndex + 1);
+							if (extruderIndex == 0)
+							{
+								for (int j = extruderCount + 1; j < maxExtruderIndex + 2; j++)
+								{
+									materialsToInclude.Add(j);
+								}
+							}
+
+							if (doMergeInSlicer)
+							{
+								int meshCount = meshGroup.Meshes.Count;
+                                for (int meshIndex =0; meshIndex< meshCount; meshIndex++)
+								{
+									Mesh mesh = meshGroup.Meshes[meshIndex];
+									if ((meshIndex % 2) == 0)
+									{
+										mergeRules += "({0}".FormatWith(savedStlCount);
+									}
+									else
+									{
+										if(meshIndex < meshCount -1)
+										{
+											mergeRules += ",({0}".FormatWith(savedStlCount);
+										}
+										else
+										{
+											mergeRules += ",{0}".FormatWith(savedStlCount);
+										}
+									}
+									int currentMeshMaterialIntdex = MeshMaterialData.Get(mesh).MaterialIndex;
+									if (materialsToInclude.Contains(currentMeshMaterialIntdex))
+									{
+										extruderFilesToSlice.Add(SaveAndGetFilenameForMesh(mesh));
+									}
+									savedStlCount++;
+								}
+								for (int i = 0; i < meshCount-1; i++)
+								{
+									mergeRules += ")";
+								}
 							}
 							else
 							{
-								extrudersUsed[extruderIndex] = true;
-								extruderMeshGroups[extruderIndex].Meshes.Add(mesh);
+								extruderFilesToSlice.Add(SaveAndGetFilenameForMaterial(meshGroup, materialsToInclude));
 							}
 						}
+						return extruderFilesToSlice.ToArray();
 					}
-
-					List<string> extruderFilesToSlice = new List<string>();
-					for (int i = 0; i < extruderMeshGroups.Count; i++)
-					{
-						MeshGroup meshGroup = extruderMeshGroups[i];
-						List<int> materialsToInclude = new List<int>();
-						materialsToInclude.Add(i + 1);
-						if (i == 0)
-						{
-							for (int j = extruderCount + 1; j < maxExtruderIndex + 2; j++)
-							{
-								materialsToInclude.Add(j);
-							}
-						}
-
-						extruderFilesToSlice.Add(SaveAndGetFilenameForMaterial(meshGroup, materialsToInclude));
-					}
-					return extruderFilesToSlice.ToArray();
+					return new string[] { "" };
 
 				default:
-					throw new NotImplementedException();
+					return new string[] { "" };
 			}
+		}
+
+		private static string SaveAndGetFilenameForMesh(Mesh meshToSave)
+		{
+			string fileName = Path.ChangeExtension(Path.GetRandomFileName(), ".stl");
+			string applicationUserDataPath = ApplicationDataStorage.ApplicationUserDataPath;
+			string folderToSaveStlsTo = Path.Combine(applicationUserDataPath, "data", "temp", "amf_to_stl");
+			if (!Directory.Exists(folderToSaveStlsTo))
+			{
+				Directory.CreateDirectory(folderToSaveStlsTo);
+			}
+			string saveStlFileName = Path.Combine(folderToSaveStlsTo, fileName);
+			MeshFileIo.Save(meshToSave, saveStlFileName);
+			return saveStlFileName;
 		}
 
 		private static string SaveAndGetFilenameForMaterial(MeshGroup extruderMeshGroup, List<int> materialIndexsToSaveInThisSTL)
 		{
 			string fileName = Path.ChangeExtension(Path.GetRandomFileName(), ".stl");
-			string applicationUserDataPath = ApplicationDataStorage.Instance.ApplicationUserDataPath;
+			string applicationUserDataPath = ApplicationDataStorage.ApplicationUserDataPath;
 			string folderToSaveStlsTo = Path.Combine(applicationUserDataPath, "data", "temp", "amf_to_stl");
 			if (!Directory.Exists(folderToSaveStlsTo))
 			{
@@ -268,7 +323,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 			return extruder1StlFileToSlice;
 		}
 
-		public static bool runInProcess = false;
+		public static bool runInProcess = true;
 		private static Process slicerProcess = null;
 
 		private static void CreateSlicedPartsThread()
@@ -280,15 +335,18 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 				if (listOfSlicingItems.Count > 0)
 				{
 					PrintItemWrapper itemToSlice = listOfSlicingItems[0];
-					string[] stlFileLocations = GetStlFileLocations(itemToSlice.FileLocation);
+					bool doMergeInSlicer = false;
+					string mergeRules = "";
+					doMergeInSlicer = ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType() == SlicingEngineTypes.MatterSlice;
+                    string[] stlFileLocations = GetStlFileLocations(itemToSlice.FileLocation, doMergeInSlicer, ref mergeRules);
 					string fileToSlice = stlFileLocations[0];
 					// check that the STL file is currently on disk
 					if (File.Exists(fileToSlice))
 					{
 						itemToSlice.CurrentlySlicing = true;
 
-						string currentConfigurationFileAndPath = Path.Combine(ApplicationDataStorage.Instance.GCodeOutputPath, "config_" + ActiveSliceSettings.Instance.GetHashCode().ToString() + ".ini");
-						ActiveSliceSettings.Instance.GenerateConfigFile(currentConfigurationFileAndPath);
+						string currentConfigurationFileAndPath = Path.Combine(ApplicationDataStorage.Instance.GCodeOutputPath, "config_" + ActiveSliceSettings.Instance.GetLongHashCode().ToString() + ".ini");
+						ActiveSliceSettings.Instance.Helpers.GenerateConfigFile(currentConfigurationFileAndPath, true);
 
 						string gcodePathAndFileName = itemToSlice.GetGCodePathAndFileName();
 						bool gcodeFileIsComplete = itemToSlice.IsGCodeFileComplete(gcodePathAndFileName);
@@ -297,20 +355,27 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 						{
 							string commandArgs = "";
 
-							switch (ActivePrinterProfile.Instance.ActiveSliceEngineType)
+							switch (ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType())
 							{
-								case ActivePrinterProfile.SlicingEngineTypes.Slic3r:
+								case SlicingEngineTypes.Slic3r:
 									commandArgs = "--load \"" + currentConfigurationFileAndPath + "\" --output \"" + gcodePathAndFileName + "\" \"" + fileToSlice + "\"";
 									break;
 
-								case ActivePrinterProfile.SlicingEngineTypes.CuraEngine:
+								case SlicingEngineTypes.CuraEngine:
 									commandArgs = "-v -o \"" + gcodePathAndFileName + "\" " + EngineMappingCura.GetCuraCommandLineSettings() + " \"" + fileToSlice + "\"";
 									break;
 
-								case ActivePrinterProfile.SlicingEngineTypes.MatterSlice:
+								case SlicingEngineTypes.MatterSlice:
 									{
 										EngineMappingsMatterSlice.WriteMatterSliceSettingsFile(currentConfigurationFileAndPath);
-										commandArgs = "-v -o \"" + gcodePathAndFileName + "\" -c \"" + currentConfigurationFileAndPath + "\"";
+										if (mergeRules == "")
+										{
+											commandArgs = "-v -o \"" + gcodePathAndFileName + "\" -c \"" + currentConfigurationFileAndPath + "\"";
+										}
+										else
+										{
+											commandArgs = "-b {0} -v -o \"".FormatWith(mergeRules) + gcodePathAndFileName + "\" -c \"" + currentConfigurationFileAndPath + "\"";
+										}
 										foreach (string filename in stlFileLocations)
 										{
 											commandArgs = commandArgs + " \"" + filename + "\"";
@@ -328,7 +393,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 
 							if (OsInformation.OperatingSystem == OSType.Android ||
 								((OsInformation.OperatingSystem == OSType.Mac || runInProcess)
-									&& ActivePrinterProfile.Instance.ActiveSliceEngineType == ActivePrinterProfile.SlicingEngineTypes.MatterSlice))
+									&& ActiveSliceSettings.Instance.Helpers.ActiveSliceEngineType() == SlicingEngineTypes.MatterSlice))
 							{
 								itemCurrentlySlicing = itemToSlice;
 								MatterHackers.MatterSlice.LogOutput.GetLogWrites += SendProgressToItem;
@@ -361,7 +426,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 											message = "Saving intermediate file";
 										}
 										message += "...";
-										UiThread.RunOnIdle((state) =>
+										UiThread.RunOnIdle(() =>
 										{
 											itemToSlice.OnSlicingOutputMessage(new StringEventArgs(message));
 										});
@@ -373,7 +438,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 								string stdError = slicerProcess.StandardError.ReadToEnd();
 
 								slicerProcess.WaitForExit();
-								using (TimedLock.Lock(slicerProcess, "SlicingProcess"))
+								lock(slicerProcess)
 								{
 									slicerProcess = null;
 								}
@@ -426,13 +491,13 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 						}
 					}
 
-					UiThread.RunOnIdle((state) =>
+					UiThread.RunOnIdle(() =>
 					{
 						itemToSlice.CurrentlySlicing = false;
 						itemToSlice.DoneSlicing = true;
 					});
 
-					using (TimedLock.Lock(listOfSlicingItems, "CreateSlicedPartsThread()"))
+					lock(listOfSlicingItems)
 					{
 						listOfSlicingItems.RemoveAt(0);
 					}
@@ -455,7 +520,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 					message = "Saving intermediate file";
 				}
 				message += "...";
-				UiThread.RunOnIdle((state) =>
+				UiThread.RunOnIdle(() =>
 				{
 					if (itemCurrentlySlicing != null)
 					{
@@ -469,7 +534,7 @@ namespace MatterHackers.MatterControl.SlicerConfiguration
 		{
 			if (slicerProcess != null)
 			{
-				using (TimedLock.Lock(slicerProcess, "SlicingProcess"))
+				lock(slicerProcess)
 				{
 					if (slicerProcess != null && !slicerProcess.HasExited)
 					{

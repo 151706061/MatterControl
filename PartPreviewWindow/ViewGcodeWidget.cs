@@ -33,9 +33,13 @@ using MatterHackers.Agg.UI;
 using MatterHackers.Agg.VertexSource;
 using MatterHackers.GCodeVisualizer;
 using MatterHackers.MatterControl.SlicerConfiguration;
+using MatterHackers.RenderOpenGl;
+using MatterHackers.RenderOpenGl.OpenGl;
 using MatterHackers.VectorMath;
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace MatterHackers.MatterControl.PartPreviewWindow
 {
@@ -111,6 +115,16 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			}
 		}
 
+		public bool TransparentExtrusion
+		{
+			get { return (UserSettings.Instance.get("GcodeViewerTransparentExtrusion") == "True"); }
+			set
+			{
+				UserSettings.Instance.set("GcodeViewerTransparentExtrusion", value.ToString());
+				Invalidate();
+			}
+		}
+
 		public bool HideExtruderOffsets
 		{
 			get
@@ -138,7 +152,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private Vector2 gridSizeMm;
 		private Vector2 gridCenterMm;
 
-		private Affine ScallingTransform
+		private Affine ScalingTransform
 		{
 			get
 			{
@@ -154,7 +168,7 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				transform *= Affine.NewTranslation(unscaledRenderOffset);
 
 				// scale to view
-				transform *= ScallingTransform;
+				transform *= ScalingTransform;
 				transform *= Affine.NewTranslation(Width / 2, Height / 2);
 
 				return transform;
@@ -164,18 +178,11 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private Vector2 unscaledRenderOffset = new Vector2(0, 0);
 
 		public string FileNameAndPath;
-		public GCodeFile loadedGCode;
 		public GCodeRenderer gCodeRenderer;
 
 		public event EventHandler ActiveLayerChanged;
 
-		public GCodeFile LoadedGCode
-		{
-			get
-			{
-				return loadedGCode;
-			}
-		}
+		public GCodeFile LoadedGCode { get; set; }
 
 		public int ActiveLayerIndex
 		{
@@ -194,16 +201,13 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 					{
 						activeLayerIndex = 0;
 					}
-					else if (activeLayerIndex >= loadedGCode.NumChangesInZ)
+					else if (activeLayerIndex >= LoadedGCode.NumChangesInZ)
 					{
-						activeLayerIndex = loadedGCode.NumChangesInZ - 1;
+						activeLayerIndex = LoadedGCode.NumChangesInZ - 1;
 					}
 					Invalidate();
 
-					if (ActiveLayerChanged != null)
-					{
-						ActiveLayerChanged(this, null);
-					}
+					ActiveLayerChanged?.Invoke(this, null);
 				}
 			}
 		}
@@ -213,13 +217,13 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			this.gridSizeMm = gridSizeMm;
 			this.gridCenterMm = gridCenterMm;
 			LocalBounds = new RectangleDouble(0, 0, 100, 100);
-			DoubleBuffer = true;
+			//DoubleBuffer = true;
 			AnchorAll();
 		}
 
 		public void SetGCodeAfterLoad(GCodeFile loadedGCode)
 		{
-			this.loadedGCode = loadedGCode;
+			this.LoadedGCode = loadedGCode;
 			if (loadedGCode == null)
 			{
 				TextWidget noGCodeLoaded = new TextWidget(string.Format("Not a valid GCode file."));
@@ -238,15 +242,15 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 		private void SetInitalLayer()
 		{
 			activeLayerIndex = 0;
-			if (loadedGCode.LineCount > 0)
+			if (LoadedGCode.LineCount > 0)
 			{
 				int firstExtrusionIndex = 0;
-				Vector3 lastPosition = loadedGCode.Instruction(0).Position;
-				double ePosition = loadedGCode.Instruction(0).EPosition;
+				Vector3 lastPosition = LoadedGCode.Instruction(0).Position;
+				double ePosition = LoadedGCode.Instruction(0).EPosition;
 				// let's find the first layer that has extrusion if possible and go to that
-				for (int i = 1; i < loadedGCode.LineCount; i++)
+				for (int i = 1; i < LoadedGCode.LineCount; i++)
 				{
-					PrinterMachineInstruction currentInstruction = loadedGCode.Instruction(i);
+					PrinterMachineInstruction currentInstruction = LoadedGCode.Instruction(i);
 					if (currentInstruction.EPosition > ePosition && lastPosition != currentInstruction.Position)
 					{
 						firstExtrusionIndex = i;
@@ -258,9 +262,9 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 				if (firstExtrusionIndex > 0)
 				{
-					for (int layerIndex = 0; layerIndex < loadedGCode.NumChangesInZ; layerIndex++)
+					for (int layerIndex = 0; layerIndex < LoadedGCode.NumChangesInZ; layerIndex++)
 					{
-						if (firstExtrusionIndex < loadedGCode.GetInstructionIndexAtLayer(layerIndex))
+						if (firstExtrusionIndex < LoadedGCode.GetInstructionIndexAtLayer(layerIndex))
 						{
 							activeLayerIndex = Math.Max(0, layerIndex - 1);
 							break;
@@ -272,108 +276,157 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		private void initialLoading_ProgressChanged(object sender, ProgressChangedEventArgs e)
 		{
-			if (LoadingProgressChanged != null)
-			{
-				LoadingProgressChanged(this, e);
-			}
+			LoadingProgressChanged?.Invoke(this, e);
 		}
 
-		private void initialLoading_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+		private async void initialLoading_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
 		{
 			SetGCodeAfterLoad((GCodeFile)e.Result);
 
-			backgroundWorker = new BackgroundWorker();
-			backgroundWorker.WorkerReportsProgress = true;
-			backgroundWorker.WorkerSupportsCancellation = true;
+			gCodeRenderer = new GCodeRenderer(LoadedGCode);
 
-			backgroundWorker.ProgressChanged += new ProgressChangedEventHandler(postLoadInitialization_ProgressChanged);
-			backgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(postLoadInitialization_RunWorkerCompleted);
+			if (ActiveSliceSettings.Instance.PrinterSelected)
+			{
+				GCodeRenderer.ExtruderWidth = ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.nozzle_diameter);
+			}
+			else
+			{
+				GCodeRenderer.ExtruderWidth = .4;
+			}
 
-			backgroundWorker.DoWork += new DoWorkEventHandler(DoPostLoadInitialization);
+			await Task.Run(() => DoPostLoadInitialization());
 
-			gCodeRenderer = new GCodeRenderer(loadedGCode);
-			backgroundWorker.RunWorkerAsync(gCodeRenderer);
+			postLoadInitialization_RunWorkerCompleted();
 		}
 
-		public static void DoPostLoadInitialization(object sender, DoWorkEventArgs doWorkEventArgs)
+		public void DoPostLoadInitialization()
 		{
-			GCodeRenderer gCodeRenderer = (GCodeRenderer)doWorkEventArgs.Argument;
 			try
 			{
-				if (gCodeRenderer.GCodeFileToDraw != null)
-				{
-					gCodeRenderer.GCodeFileToDraw.GetFilamentUsedMm(ActiveSliceSettings.Instance.NozzleDiameter);
-				}
+				gCodeRenderer.GCodeFileToDraw?.GetFilamentUsedMm(ActiveSliceSettings.Instance.GetValue<double>(SettingsKey.filament_diameter));
 			}
-			catch (Exception)
+			catch (Exception e)
 			{
+				Debug.Print(e.Message);
+				GuiWidget.BreakInDebugger();
 			}
 			gCodeRenderer.CreateFeaturesForLayerIfRequired(0);
 		}
 
-		private void postLoadInitialization_ProgressChanged(object sender, ProgressChangedEventArgs e)
+		private void postLoadInitialization_RunWorkerCompleted()
 		{
-			if (LoadingProgressChanged != null)
-			{
-				LoadingProgressChanged(this, e);
-			}
-		}
-
-		private void postLoadInitialization_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-		{
-			if (DoneLoading != null)
-			{
-				DoneLoading(this, null);
-			}
+			DoneLoading?.Invoke(this, null);
 		}
 
 		private PathStorage grid = new PathStorage();
+		static RGBA_Bytes gridColor = new RGBA_Bytes(190, 190, 190, 255);
 
 		public override void OnDraw(Graphics2D graphics2D)
 		{
-			if (loadedGCode != null)
+			if (LoadedGCode != null)
 			{
-				Affine transform = TotalTransform;
+				//using (new PerformanceTimer("GCode Timer", "Total"))
+				{
+					Affine transform = TotalTransform;
 
-				CreateGrid(transform);
+					if (RenderGrid)
+					{
+						//using (new PerformanceTimer("GCode Timer", "Render Grid"))
+						{
+							double gridLineWidths = 0.2 * layerScale;
 
-				double gridLineWidths = 0.2 * layerScale;
-				Stroke stroke = new Stroke(grid, gridLineWidths);
+							Graphics2DOpenGL graphics2DGl = graphics2D as Graphics2DOpenGL;
+							if (graphics2DGl != null)
+							{
+								GlRenderGrid(graphics2DGl, transform, gridLineWidths);
+							}
+							else
+							{
+								CreateGrid(transform);
 
-				if (RenderGrid)
-				{
-					graphics2D.Render(stroke, new RGBA_Bytes(190, 190, 190, 255));
-				}
+								Stroke stroke = new Stroke(grid, gridLineWidths);
+								graphics2D.Render(stroke, gridColor);
+							}
+						}
+					}
 
-				RenderType renderType = RenderType.Extrusions;
-				if (RenderMoves)
-				{
-					renderType |= RenderType.Moves;
-				}
-				if (RenderRetractions)
-				{
-					renderType |= RenderType.Retractions;
-				}
-				if (RenderSpeeds)
-				{
-					renderType |= RenderType.SpeedColors;
-				}
-				if (SimulateExtrusion)
-				{
-					renderType |= RenderType.SimulateExtrusion;
-				}
-				if (HideExtruderOffsets)
-				{
-					renderType |= RenderType.HideExtruderOffsets;
-				}
+					GCodeRenderInfo renderInfo = new GCodeRenderInfo(activeLayerIndex, activeLayerIndex, transform, layerScale, CreateRenderInfo(),
+						FeatureToStartOnRatio0To1, FeatureToEndOnRatio0To1,
+						new Vector2[] { ActiveSliceSettings.Instance.Helpers.ExtruderOffset(0), ActiveSliceSettings.Instance.Helpers.ExtruderOffset(1) });
 
-				GCodeRenderInfo renderInfo = new GCodeRenderInfo(activeLayerIndex, activeLayerIndex, transform, layerScale, renderType,
-					FeatureToStartOnRatio0To1, FeatureToEndOnRatio0To1,
-					new Vector2[] { ActiveSliceSettings.Instance.GetOffset(0), ActiveSliceSettings.Instance.GetOffset(1) });
-				gCodeRenderer.Render(graphics2D, renderInfo);
+					//using (new PerformanceTimer("GCode Timer", "Render"))
+					{
+						gCodeRenderer.Render(graphics2D, renderInfo);
+					}
+				}
 			}
 
 			base.OnDraw(graphics2D);
+		}
+
+		private RenderType CreateRenderInfo()
+		{
+			RenderType renderType = RenderType.Extrusions;
+			if (RenderMoves)
+			{
+				renderType |= RenderType.Moves;
+			}
+			if (RenderRetractions)
+			{
+				renderType |= RenderType.Retractions;
+			}
+			if (RenderSpeeds)
+			{
+				renderType |= RenderType.SpeedColors;
+			}
+			if (SimulateExtrusion)
+			{
+				renderType |= RenderType.SimulateExtrusion;
+			}
+			if (TransparentExtrusion)
+			{
+				renderType |= RenderType.TransparentExtrusion;
+			}
+			if (HideExtruderOffsets)
+			{
+				renderType |= RenderType.HideExtruderOffsets;
+			}
+
+			return renderType;
+		}
+
+		private void GlRenderGrid(Graphics2DOpenGL graphics2DGl, Affine transform, double width)
+		{
+			graphics2DGl.PreRender();
+			GL.Begin(BeginMode.Triangles);
+
+			Vector2 gridOffset = gridCenterMm - gridSizeMm / 2;
+			if (gridSizeMm.x > 0 && gridSizeMm.y > 0)
+			{
+				grid.remove_all();
+				for (int y = 0; y <= gridSizeMm.y; y += 10)
+				{
+					Vector2 start = new Vector2(0, y) + gridOffset;
+					Vector2 end = new Vector2(gridSizeMm.x, y) + gridOffset;
+					transform.transform(ref start);
+					transform.transform(ref end);
+
+					graphics2DGl.DrawAALine(start, end, width, gridColor);
+				}
+
+				for (int x = 0; x <= gridSizeMm.x; x += 10)
+				{
+					Vector2 start = new Vector2(x, 0) + gridOffset;
+					Vector2 end = new Vector2(x, gridSizeMm.y) + gridOffset;
+					transform.transform(ref start);
+					transform.transform(ref end);
+
+					graphics2DGl.DrawAALine(start, end, width, gridColor);
+				}
+			}
+
+			GL.End();
+			graphics2DGl.PopOrthoProjection();
 		}
 
 		public void CreateGrid(Affine transform)
@@ -388,8 +441,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 					Vector2 end = new Vector2(gridSizeMm.x, y) + gridOffset;
 					transform.transform(ref start);
 					transform.transform(ref end);
-					grid.MoveTo((int)(start.x + .5), (int)(start.y + .5) + .5);
-					grid.LineTo((int)(int)(end.x + .5), (int)(end.y + .5) + .5);
+					grid.MoveTo(Math.Round(start.x), Math.Round(start.y));
+					grid.LineTo(Math.Round(end.x), Math.Round(end.y));
 				}
 
 				for (int x = 0; x <= gridSizeMm.x; x += 10)
@@ -404,15 +457,31 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			}
 		}
 
+		double startDistanceBetweenPoints = 1;
+		double pinchStartScale = 1;
 		public override void OnMouseDown(MouseEventArgs mouseEvent)
 		{
 			base.OnMouseDown(mouseEvent);
 			if (MouseCaptured)
 			{
-				mouseDownPosition.x = mouseEvent.X;
-				mouseDownPosition.y = mouseEvent.Y;
+				if (mouseEvent.NumPositions == 1)
+				{
+					mouseDownPosition.x = mouseEvent.X;
+					mouseDownPosition.y = mouseEvent.Y;
+				}
+				else
+				{
+					Vector2 centerPosition = (mouseEvent.GetPosition(1) + mouseEvent.GetPosition(0)) / 2;
+					mouseDownPosition = centerPosition;
+				}
 
 				lastMousePosition = mouseDownPosition;
+
+				if (mouseEvent.NumPositions > 1)
+				{
+					startDistanceBetweenPoints = (mouseEvent.GetPosition(1) - mouseEvent.GetPosition(0)).Length;
+					pinchStartScale = layerScale;
+				}
 			}
 		}
 
@@ -421,32 +490,49 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			base.OnMouseWheel(mouseEvent);
 			if (FirstWidgetUnderMouse) // TODO: find a good way to decide if you are what the wheel is trying to do
 			{
-				Vector2 mousePreScale = new Vector2(mouseEvent.X, mouseEvent.Y);
-				TotalTransform.inverse_transform(ref mousePreScale);
 
 				const double deltaFor1Click = 120;
-				layerScale = layerScale + layerScale * (mouseEvent.WheelDelta / deltaFor1Click) * .1;
+				double scaleAmount = (mouseEvent.WheelDelta / deltaFor1Click) * .1;
 
-				Vector2 mousePostScale = new Vector2(mouseEvent.X, mouseEvent.Y);
-				TotalTransform.inverse_transform(ref mousePostScale);
-
-				unscaledRenderOffset += (mousePostScale - mousePreScale);
+				ScalePartAndFixPosition(mouseEvent, layerScale + layerScale * scaleAmount);
 
 				Invalidate();
 			}
 		}
 
+		void ScalePartAndFixPosition(MouseEventArgs mouseEvent, double scaleAmount)
+		{
+			Vector2 mousePreScale = new Vector2(mouseEvent.X, mouseEvent.Y);
+			TotalTransform.inverse_transform(ref mousePreScale);
+
+			layerScale = scaleAmount;
+
+			Vector2 mousePostScale = new Vector2(mouseEvent.X, mouseEvent.Y);
+			TotalTransform.inverse_transform(ref mousePostScale);
+
+			unscaledRenderOffset += (mousePostScale - mousePreScale);
+		}
+
 		public override void OnMouseMove(MouseEventArgs mouseEvent)
 		{
 			base.OnMouseMove(mouseEvent);
-			Vector2 mousePos = new Vector2(mouseEvent.X, mouseEvent.Y);
+			Vector2 mousePos = new Vector2();
+			if (mouseEvent.NumPositions == 1)
+			{
+				mousePos = new Vector2(mouseEvent.X, mouseEvent.Y);
+			}
+			else
+			{
+				Vector2 centerPosition = (mouseEvent.GetPosition(1) + mouseEvent.GetPosition(0)) / 2;
+				mousePos = centerPosition;
+			}
 			if (MouseCaptured)
 			{
 				Vector2 mouseDelta = mousePos - lastMousePosition;
 				switch (TransformState)
 				{
 					case ETransformState.Move:
-						ScallingTransform.inverse_transform(ref mouseDelta);
+						ScalingTransform.inverse_transform(ref mouseDelta);
 
 						unscaledRenderOffset += mouseDelta;
 						break;
@@ -480,11 +566,22 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 				Invalidate();
 			}
 			lastMousePosition = mousePos;
+
+			// check if we should do some scaling
+			if (TransformState == ETransformState.Move
+				&& mouseEvent.NumPositions > 1
+				&& startDistanceBetweenPoints > 0)
+			{
+				double curDistanceBetweenPoints = (mouseEvent.GetPosition(1) - mouseEvent.GetPosition(0)).Length;
+
+				double scaleAmount = pinchStartScale * curDistanceBetweenPoints / startDistanceBetweenPoints;
+				ScalePartAndFixPosition(mouseEvent, scaleAmount);
+			}
 		}
 
 		public void Load(string gcodePathAndFileName)
 		{
-			loadedGCode = GCodeFile.Load(gcodePathAndFileName);
+			LoadedGCode = GCodeFile.Load(gcodePathAndFileName);
 			SetInitalLayer();
 			CenterPartInView();
 		}
@@ -499,12 +596,17 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 			backgroundWorker.ProgressChanged += new ProgressChangedEventHandler(initialLoading_ProgressChanged);
 			backgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(initialLoading_RunWorkerCompleted);
 
-			loadedGCode = null;
+			LoadedGCode = null;
 			GCodeFileLoaded.LoadInBackground(backgroundWorker, gcodePathAndFileName);
 		}
 
 		public override void OnClosed(EventArgs e)
 		{
+			if (gCodeRenderer != null)
+			{
+				gCodeRenderer.Dispose();
+			}
+
 			if (backgroundWorker != null)
 			{
 				backgroundWorker.CancelAsync();
@@ -536,8 +638,8 @@ namespace MatterHackers.MatterControl.PartPreviewWindow
 
 		public void CenterPartInView()
 		{
-			RectangleDouble partBounds = loadedGCode.GetBounds();
-			Vector2 weightedCenter = loadedGCode.GetWeightedCenter();
+			RectangleDouble partBounds = LoadedGCode.GetBounds();
+			Vector2 weightedCenter = LoadedGCode.GetWeightedCenter();
 
 			unscaledRenderOffset = -weightedCenter;
 			layerScale = Math.Min(Height / partBounds.Height, Width / partBounds.Width);

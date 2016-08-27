@@ -29,15 +29,19 @@ either expressed or implied, of the FreeBSD Project.
 
 using MatterHackers.Agg;
 using MatterHackers.Agg.Font;
+using MatterHackers.Agg.PlatformAbstract;
 using MatterHackers.Agg.UI;
 using MatterHackers.VectorMath;
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace MatterHackers.MatterControl
 {
 	public class TextScrollWidget : GuiWidget
 	{
+		object locker = new object();
+
 		private string[] StartLineStringFilters = null;
 
 		private event EventHandler unregisterEvents;
@@ -45,8 +49,9 @@ namespace MatterHackers.MatterControl
 		private List<string> allSourceLines;
 		private List<string> visibleLines;
 
-		private TypeFacePrinter printer = new TypeFacePrinter();
-		public RGBA_Bytes TextColor = new RGBA_Bytes(102, 102, 102);
+		private TypeFacePrinter printer = null;
+
+			public RGBA_Bytes TextColor = new RGBA_Bytes(102, 102, 102);
 		private int forceStartLine = -1;
 
 		public double Position0To1
@@ -86,6 +91,7 @@ namespace MatterHackers.MatterControl
 
 		public TextScrollWidget(List<string> sourceLines)
 		{
+			printer = new TypeFacePrinter("", new StyledTypeFace(ApplicationController.MonoSpacedTypeFace, 12));
 			printer.DrawFromHintedCache = true;
 			this.allSourceLines = sourceLines;
 			this.visibleLines = sourceLines;
@@ -137,7 +143,7 @@ namespace MatterHackers.MatterControl
 
 		private void CreateFilteredList()
 		{
-			using (TimedLock.Lock(this, "CreatingFilteredList"))
+			lock(locker)
 			{
 				visibleLines = new List<string>();
 				string[] allSourceLinesTemp = allSourceLines.ToArray();
@@ -185,44 +191,76 @@ namespace MatterHackers.MatterControl
 			int numLinesToDraw = NumVisibleLines;
 
 			double y = LocalBounds.Bottom + printer.TypeFaceStyle.EmSizeInPixels * numLinesToDraw;
-			using (TimedLock.Lock(this, "DrawingLines"))
+			lock(visibleLines)
 			{
-				int startLineIndex = visibleLines.Count - numLinesToDraw;
-				if (forceStartLine != -1)
+				lock(locker)
 				{
-					y = LocalBounds.Top;
+					int startLineIndex = visibleLines.Count - numLinesToDraw;
+					if (forceStartLine != -1)
+					{
+						y = LocalBounds.Top;
 
-					if (forceStartLine > visibleLines.Count - numLinesToDraw)
-					{
-						forceStartLine = -1;
-					}
-					else
-					{
-						// make sure we show all the lines we can
-						startLineIndex = Math.Min(forceStartLine, startLineIndex);
-					}
-				}
-				int endLineIndex = visibleLines.Count;
-				for (int lineIndex = startLineIndex; lineIndex < endLineIndex; lineIndex++)
-				{
-					if (lineIndex >= 0)
-					{
-						if (visibleLines[lineIndex] != null)
+						if (forceStartLine > visibleLines.Count - numLinesToDraw)
 						{
-							printer.Text = visibleLines[lineIndex];
-							printer.Origin = new Vector2(Bounds.Left + 2, y);
-							printer.Render(graphics2D, TextColor);
+							forceStartLine = -1;
+						}
+						else
+						{
+							// make sure we show all the lines we can
+							startLineIndex = Math.Min(forceStartLine, startLineIndex);
 						}
 					}
-					y -= printer.TypeFaceStyle.EmSizeInPixels;
-					if (y < -printer.TypeFaceStyle.EmSizeInPixels)
+					int endLineIndex = visibleLines.Count;
+					for (int lineIndex = startLineIndex; lineIndex < endLineIndex; lineIndex++)
 					{
-						break;
+						if (lineIndex >= 0)
+						{
+							if (visibleLines[lineIndex] != null)
+							{
+								printer.Text = visibleLines[lineIndex];
+								printer.Origin = new Vector2(Bounds.Left + 2, y);
+								printer.Render(graphics2D, TextColor);
+							}
+						}
+						y -= printer.TypeFaceStyle.EmSizeInPixels;
+						if (y < -printer.TypeFaceStyle.EmSizeInPixels)
+						{
+							break;
+						}
 					}
 				}
 			}
 
 			base.OnDraw(graphics2D);
 		}
-	}
+
+        public override void OnMouseWheel(MouseEventArgs mouseEvent)
+        {
+            base.OnMouseWheel(mouseEvent);
+            double scrollDelta = (mouseEvent.WheelDelta / ((visibleLines.Count) * 60.0));
+
+            if (scrollDelta < 0)//Rounding seems to favor scrolling up, compinsating scroll down to feel as smooth
+            {
+                scrollDelta *= 2;
+            }
+            else if (Position0To1 == 0)//IF we scroll up at the bottum get pop out from the "on screen" chunck
+            {
+                scrollDelta = (NumVisibleLines/(double)visibleLines.Count);
+            }
+
+            double newPos = Position0To1 + scrollDelta;
+            
+            if(newPos > 1)
+            {
+                newPos = 1;
+            }
+            else if(newPos < 0)
+            {
+                newPos = 0;
+            }
+
+            Position0To1 = newPos;
+        }
+
+    }
 }
